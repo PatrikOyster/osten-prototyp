@@ -4,8 +4,8 @@
    Ingen DOM här: filen körs också i Node-tester (tools/test-core.js).
    Allt som är "knappar att vrida på" för balans finns i CFG och WEAPONS.
    ===================================================================== */
-const GAME_VERSION = '0.1.0';
-const PROTO_VERSION = 1;
+const GAME_VERSION = '0.2.0';
+const PROTO_VERSION = 2;   // 2: botantal (settings.bots) i stället för fill, banval (settings.map)
 const TAU = Math.PI * 2;
 
 const CFG = {
@@ -45,6 +45,14 @@ const CFG = {
 /* ---------- Hjälpfunktioner ---------- */
 function clamp(v, a, b) { return v < a ? a : v > b ? b : v; }
 function lerp(a, b, t) { return a + (b - a) * t; }
+/* Hur många botar en match får, givet antal människor och värdens önskemål (0..7).
+   Aldrig fler än det finns platser, och den som är ensam får alltid minst en motståndare. */
+function botCount(humans, want) {
+  const free = Math.max(0, CFG.maxPlayers - humans);
+  let n = clamp(Math.round(+want || 0), 0, free);
+  if (humans + n < 2) n = Math.min(1, free);
+  return n;
+}
 function wrapAng(a) { while (a > Math.PI) a -= TAU; while (a < -Math.PI) a += TAU; return a; }
 function angDiff(a, b) { return wrapAng(a - b); }
 function lerpAng(a, b, t) { return a + wrapAng(b - a) * t; }
@@ -131,9 +139,11 @@ const WEAPONS = {
     verb: 'champagne-poppade', ono: 'POP!', col: '#f5d76e'
   },
   souffleur: {
-    name: 'Lövblåsaren', fr: 'Le Souffleur', tag: 'Knuffar', kind: 'blow',
-    range: 300, half: 0.46, push: 2900, maxEv: 560, heatUp: 0.42, cool: 0.55, resume: 0.35,
-    desc: 'Blåser bort folk – gärna rakt ut i havet. Överhettas om du överdriver.',
+    name: 'Lövblåsaren', fr: 'Le Souffleur', tag: 'Blåser bort', kind: 'blow',
+    range: 330, half: 0.5, push: 2600, maxEv: 520, heatUp: 0.4, cool: 0.55, resume: 0.35,
+    // vindmätare per offer: fylls medan man står i luftströmmen (snabbare ju närmare), töms när man kommit ur den
+    galeIn: 2.2, galeFar: 1.1, galeOut: 1.4, kb: 1200,
+    desc: 'Håll in knappen och blås. Den som blir kvar i vinden för länge blåses bort och blir utslagen – annars knuffas man bara bakåt. Överhettas om du överdriver.',
     verb: 'blåste bort', ono: 'FIUU!', col: '#ff9f1c'
   },
   trampoline: {
@@ -169,20 +179,34 @@ const OB_TYPES = {
   tower: { r: 46, hp: 14 },
   tree: { r: 27, hp: 3 },
   barrel: { r: 21, hp: 2 },
-  cafe: { r: 30, hp: 3 }
+  cafe: { r: 30, hp: 3 },
+  // Torget
+  stall: { r: 40, hp: 4 },        // marknadsstånd
+  column: { r: 22, hp: 6 },       // Morris-kolonn
+  carousel: { r: 66, hp: 14 },    // karusell
+  kiosk: { r: 30, hp: 4 }         // bouquinistens låda
 };
+
+/* Banor. 'ile' = Osten på ön (standard), 'place' = Torget i Paris (Seine runt om). */
+const MAPS = {
+  ile: { id: 'ile', name: 'Osten på ön', fr: "L'Île du Fromage", desc: 'Byn, dammen och bryggan. Havet runt om.' },
+  place: { id: 'place', name: 'Torget i Paris', fr: 'La Place du Fromage', desc: 'Kullersten, marknad och karusell. Seine runt om.' }
+};
+const MAP_ORDER = ['ile', 'place'];
 
 function coastR(th) {
   return CFG.islandR + 60 * Math.sin(3 * th + 0.4) + 35 * Math.cos(5 * th + 0.7) + 20 * Math.sin(7 * th + 1.3);
 }
 
-function makeMap(seed) {
+function makeMap(seed, kind) { return kind === 'place' ? makePlace(seed) : makeIsland(seed); }
+
+function makeIsland(seed) {
   const rng = mulberry32((seed ^ 0x51ED270B) >>> 0);
   const rnd = (a, b) => a + (b - a) * rng();
   const COAST_MIN = CFG.islandR - 115 - 10, COAST_MIN2 = COAST_MIN * COAST_MIN;
   const pierA = Math.PI / 2;
   const m = {
-    seed, obstacles: [], spawns: [],
+    kind: 'ile', seed, obstacles: [], spawns: [], coastR, fleeMargin: 330,
     pond: { x: -430, y: 240, rx: 125, ry: 85 },
     pier: { x0: -46, x1: 46, y0: coastR(pierA) - 40, y1: coastR(pierA) + 250 },
     village: { x: Math.cos(-0.88) * 500, y: Math.sin(-0.88) * 500 },
@@ -244,5 +268,71 @@ function makeMap(seed) {
   scatter('cafe', 3, '', true);
   scatter('tree', 24, 'platane', false);
   scatter('barrel', 9, '', false);
+  return m;
+}
+
+/* ---------- Torget i Paris: en kullerstensplats (avrundad fyrkant) omgiven av Seine ----------
+   Fast, spegelsymmetrisk uppställning så att ingen startplats har fördel. Bara tunnor slumpas fram av seed. */
+const PLACE = { a: 830, b: 740, n: 4 };
+function placeR(th) {
+  const c = Math.abs(Math.cos(th)) / PLACE.a, s = Math.abs(Math.sin(th)) / PLACE.b;
+  return Math.pow(Math.pow(c, PLACE.n) + Math.pow(s, PLACE.n), -1 / PLACE.n);
+}
+
+function makePlace(seed) {
+  const rng = mulberry32((seed ^ 0x7A1ACE5) >>> 0);
+  const rnd = (a, b) => a + (b - a) * rng();
+  let cmin = 1e9; for (let i = 0; i < 360; i++) cmin = Math.min(cmin, placeR(i / 360 * TAU));
+  const COAST_MIN2 = (cmin - 12) * (cmin - 12);
+  const m = {
+    kind: 'place', seed, obstacles: [], spawns: [], coastR: placeR, fleeMargin: 250,
+    pond: { x: 440, y: 330, rx: 120, ry: 78 },            // bassin med leksaksbåtar (långsam mark, som dammen)
+    court: { x: -430, y: -330, w: 280, h: 160 },          // pétanquebana (bara dekor)
+    pier: null, village: null,
+    onLand(x, y) {
+      const d2 = x * x + y * y;
+      if (d2 < COAST_MIN2) return true;
+      return Math.sqrt(d2) < placeR(Math.atan2(y, x)) - 8;
+    },
+    inPond(x, y, pad) {
+      const q = m.pond, px = (x - q.x) / (q.rx + (pad || 0)), py = (y - q.y) / (q.ry + (pad || 0));
+      return px * px + py * py < 1;
+    }
+  };
+  for (let k = 0; k < 8; k++) {
+    const a = (k + 0.5) * TAU / 8, r = Math.min(placeR(a) - 110, 690);
+    m.spawns.push({ x: Math.cos(a) * r, y: Math.sin(a) * r, a });
+  }
+  let nid = 1;
+  const add = (t, v, x, y) => { const T = OB_TYPES[t]; m.obstacles.push({ id: nid++, t, v, x: Math.round(x), y: Math.round(y), r: T.r, hp: T.hp }); };
+  // Platanallé: två rader med öppning i mitten
+  for (const sy of [-1, 1]) for (const x of [-500, -300, -100, 100, 300, 500]) add('tree', 'platane', x, sy * 480);
+  // Marknad: tre stånd på var sida om kullen
+  const goods = ['fromage', 'fruits', 'pain', 'fleurs'];
+  for (const sx of [-1, 1]) [-150, 0, 150].forEach((y, i) => add('stall', goods[(i + (sx > 0 ? 1 : 0)) % goods.length], sx * 540, y));
+  // Morris-kolonner på axlarna
+  for (const sx of [-1, 1]) add('column', '', sx * 385, 0);
+  for (const sy of [-1, 1]) add('column', '', 0, sy * 345);
+  // Café-terrasser (punktsymmetriska)
+  for (const [x, y] of [[-470, 340], [-380, 395], [-295, 340]]) { add('cafe', '', x, y); add('cafe', '', -x, -y); }
+  // Bouquinister vid kajen
+  for (const sx of [-1, 1]) for (const sy of [-1, 1]) add('kiosk', '', sx * 745, sy * 95);
+  // Karusellen i norr, Eiffeltornet i söder
+  add('carousel', '', 0, -600);
+  add('tower', '', 0, 600);
+  // Slumpade tunnor
+  const ok = (x, y, r) => {
+    const d = Math.hypot(x, y), th = Math.atan2(y, x);
+    if (d > placeR(th) - r - 80 || d < CFG.hillR + r + 50) return false;
+    if (m.inPond(x, y, r + 25)) return false;
+    const ct = m.court; if (Math.abs(x - ct.x) < ct.w / 2 + r + 20 && Math.abs(y - ct.y) < ct.h / 2 + r + 20) return false;
+    for (const s of m.spawns) if (Math.hypot(x - s.x, y - s.y) < 130 + r) return false;
+    for (const o of m.obstacles) if (Math.hypot(x - o.x, y - o.y) < o.r + r + 30) return false;
+    return true;
+  };
+  for (let i = 0, n = 0; i < 400 && n < 8; i++) {
+    const x = Math.round(rnd(-760, 760)), y = Math.round(rnd(-660, 660));
+    if (ok(x, y, OB_TYPES.barrel.r)) { add('barrel', '', x, y); n++; }
+  }
   return m;
 }

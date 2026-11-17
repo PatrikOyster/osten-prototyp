@@ -76,7 +76,7 @@ const r0 = v => Math.round(v);
 class Sim {
   constructor(o) {
     this.seed = (o.seed >>> 0) || 1;
-    this.map = makeMap(this.seed);
+    this.map = makeMap(this.seed, o.map);
     this.rng = mulberry32((this.seed ^ 0xA5A5A5A5) >>> 0);
     this.matchSec = o.matchSec || CFG.matchSec;
     this.time = 0;
@@ -117,6 +117,7 @@ class Sim {
       st: 'alive', koT: 0, koCause: '', inv: 0,
       dashT: 0, dashDx: 0, dashDy: 0, tkCd: 0, recT: 0,
       sw: null, wcd: 0, ammo: W.ammo || 0, reload: 0, heat: 0, over: false, guard: false, guardT: 0, blow: false,
+      gale: 0, galeBy: -1, galeHit: false,
       dazeT: 0, stink: 0, stinkBy: -1, slowStink: false, seaT: 0, wasSea: false,
       airT: 0, airDur: 1, airDx: 0, airDy: 0, padCd: 0,
       carry: false, swinging: false, daze: false,
@@ -164,6 +165,7 @@ class Sim {
     this.pt = this.timeLeft;
     for (const p of this.players) if (p.bot) this.botThink(p, dt);
     for (const p of this.players) this.stepPlayer(p, dt);
+    this.galeDecay(dt);
     this.separate();
     this.stepCheese(dt);
     this.stepProj(dt);
@@ -341,7 +343,7 @@ class Sim {
     if (c.state === 'carried' && c.carrier === v.id) this.dropCheese(v, kx, ky);
     v.st = 'ko'; v.koT = CFG.respawnSec; v.koCause = cause;
     v.evx = kx * force; v.evy = ky * force; v.cvx = v.cvy = 0;
-    v.dashT = 0; v.recT = 0; v.sw = null; v.guard = false; v.guardT = 0; v.blow = false; v.stink = 0; v.dazeT = 0;
+    v.dashT = 0; v.recT = 0; v.sw = null; v.guard = false; v.guardT = 0; v.blow = false; v.stink = 0; v.dazeT = 0; v.gale = 0;
     v.kos++;
     if (by >= 0 && by !== v.id) { const a = this.pmap.get(by); if (a) a.hits++; }
     this.ev('ko', v.id, by, cause, r0(v.x), r0(v.y), r0(kx * 100), r0(ky * 100));
@@ -355,7 +357,7 @@ class Sim {
     const l = Math.hypot(ux, uy);
     if (l < 0.01) { ux = 0; uy = 0; } else { ux /= l; uy /= l; }
     // Osten "poppar" iväg: slumpad riktning, lite åt knuffhållet, och inåt mot ön om man är nära kusten
-    const dd = Math.hypot(p.x, p.y) || 1, cr = coastR(Math.atan2(p.y, p.x));
+    const dd = Math.hypot(p.x, p.y) || 1, cr = this.map.coastR(Math.atan2(p.y, p.x));
     const near = clamp((dd - (cr - 380)) / 280, 0, 1);
     const ra = this.rng() * TAU;
     ux = ux * 0.5 + Math.cos(ra) * 0.7 - p.x / dd * near * 1.6;
@@ -612,6 +614,15 @@ class Sim {
     this.ev('place', p.id, 'trampoline', r0(x), r0(y));
   }
 
+  /* Vindmätaren töms för alla som inte blåstes på i det här steget */
+  galeDecay(dt) {
+    const out = WEAPONS.souffleur.galeOut;
+    for (const q of this.players) {
+      if (q.galeHit) q.galeHit = false;
+      else if (q.gale > 0) q.gale = Math.max(0, q.gale - out * dt);
+    }
+  }
+
   blowLogic(p, W, dt) {
     const hold = p.inp.wd;
     if (p.over) { p.heat = Math.max(0, p.heat - W.cool * dt); if (p.heat <= W.resume) p.over = false; return; }
@@ -624,11 +635,15 @@ class Sim {
       const dx = q.x - p.x, dy = q.y - p.y, d = Math.hypot(dx, dy);
       if (d > W.range + q.r || d < 1) continue;
       if (Math.abs(angDiff(Math.atan2(dy, dx), p.a)) > W.half) continue;
-      const k = 1 - 0.5 * d / (W.range + q.r);
+      const f = d / (W.range + q.r), k = 1 - 0.5 * f;
       q.evx += dx / d * W.push * k * dt; q.evy += dy / d * W.push * k * dt;
       const s = Math.hypot(q.evx, q.evy);
       if (s > W.maxEv) { q.evx *= W.maxEv / s; q.evy *= W.maxEv / s; }
       q.lastHit = { by: p.id, t: this.time };
+      // Vindmätaren: den som blir kvar i luftströmmen blåses till slut bort (utslagen). Skyddstid räknas inte.
+      if (q.inv > 0) continue;
+      q.gale += (W.galeIn + (W.galeFar - W.galeIn) * f) * dt; q.galeHit = true; q.galeBy = p.id;
+      if (q.gale >= 1) { q.gale = 0; this.koPlayer(q, p.id, 'souffleur', dx / d, dy / d, W.kb); }
     }
     for (const b of this.proj) {
       if (b.k === 'can') continue;
@@ -811,7 +826,7 @@ class Sim {
       st: p.st === 'alive' ? 0 : p.st === 'ko' ? 1 : 2,
       inv: p.inv > 0, carry: c.state === 'carried' && c.carrier === p.id, guard: p.guard, blow: p.blow,
       dash: p.dashT > 0, daze: p.dazeT > 0, slow: p.slowStink, over: p.over,
-      sw: p.sw ? p.sw.t : -1, e1, wcd: clamp(wcd, 0, 1), m, stink: clamp(p.stink / WEAPONS.epoisses.koAfter, 0, 1),
+      sw: p.sw ? p.sw.t : -1, e1, wcd: clamp(wcd, 0, 1), m, stink: clamp(p.stink / WEAPONS.epoisses.koAfter, 0, 1), gale: clamp(p.gale, 0, 1),
       score: p.score, kos: p.kos, hits: p.hits, best: p.best, tk: CFG.tkCd ? p.tkCd / CFG.tkCd : 0
     };
   }
@@ -842,7 +857,7 @@ function encodeView(v) {
       q.id, R(q.x), R(q.y), R(q.vx), R(q.vy), R(q.a * 100), q.st,
       (q.inv ? 1 : 0) | (q.carry ? 2 : 0) | (q.guard ? 4 : 0) | (q.blow ? 8 : 0) | (q.dash ? 16 : 0) | (q.daze ? 32 : 0) | (q.slow ? 64 : 0) | (q.over ? 128 : 0),
       q.sw < 0 ? -1 : R(q.sw * 1000), R(q.e1 * 100), R(q.wcd * 100), R(q.m * 100), R(q.stink * 100),
-      R(q.score * 10), q.kos, q.hits, R(q.best * 10), R(q.tk * 100)
+      R(q.score * 10), q.kos, q.hits, R(q.best * 10), R(q.tk * 100), R(q.gale * 100)
     ]),
     c: [R(v.cheese.x), R(v.cheese.y), R(v.cheese.vx), R(v.cheese.vy), v.cheese.st, v.cheese.by, R(v.cheese.air * 100), R(v.cheese.rot * 100)],
     b: v.proj.map(b => [b.id, b.k, R(b.x), R(b.y), R(b.vx), R(b.vy), b.o, R(b.r)]),
@@ -860,7 +875,7 @@ function decodeView(s) {
       inv: !!(q[7] & 1), carry: !!(q[7] & 2), guard: !!(q[7] & 4), blow: !!(q[7] & 8), dash: !!(q[7] & 16),
       daze: !!(q[7] & 32), slow: !!(q[7] & 64), over: !!(q[7] & 128),
       sw: q[8] < 0 ? -1 : q[8] / 1000, e1: q[9] / 100, wcd: q[10] / 100, m: q[11] / 100, stink: q[12] / 100,
-      score: q[13] / 10, kos: q[14], hits: q[15], best: q[16] / 10, tk: q[17] / 100
+      score: q[13] / 10, kos: q[14], hits: q[15], best: q[16] / 10, tk: q[17] / 100, gale: (q[18] || 0) / 100
     })),
     cheese: { x: f[0], y: f[1], vx: f[2], vy: f[3], st: f[4], by: f[5], air: f[6] / 100, rot: f[7] / 100 },
     proj: s.b.map(b => ({ id: b[0], k: b[1], x: b[2], y: b[3], vx: b[4], vy: b[5], o: b[6], r: b[7] })),

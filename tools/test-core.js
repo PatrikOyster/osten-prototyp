@@ -8,8 +8,8 @@ const ctx = vm.createContext({ console, Math, Set, Map, Object, Array, JSON, Num
 for (const f of ['cfg', 'sim', 'bots']) {
   vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'js', f + '.js'), 'utf8'), ctx, { filename: f + '.js' });
 }
-const G = vm.runInContext('({CFG, WEAPONS, WEAPON_ORDER, SKINS, Sim, makeMap, coastR, encodeView, decodeView, lerpView, motionStep, TAU})', ctx);
-const { CFG, WEAPONS, WEAPON_ORDER, Sim, makeMap, encodeView, decodeView, lerpView } = G;
+const G = vm.runInContext('({CFG, WEAPONS, WEAPON_ORDER, SKINS, Sim, makeMap, coastR, placeR, MAPS, MAP_ORDER, encodeView, decodeView, lerpView, motionStep, botCount, TAU})', ctx);
+const { CFG, WEAPONS, WEAPON_ORDER, Sim, makeMap, placeR, MAPS, MAP_ORDER, encodeView, decodeView, lerpView, botCount } = G;
 
 let fails = 0, passes = 0;
 function ok(cond, msg) { if (cond) { passes++; } else { fails++; console.log('  FAIL: ' + msg); } }
@@ -18,7 +18,7 @@ const DT = 1 / 60;
 
 function mk(weapons, opts = {}) {
   const players = weapons.map((w, i) => ({ id: i, name: 'P' + i, skin: i % 8, weapon: w, bot: !!(opts.bots) }));
-  const s = new Sim({ seed: opts.seed || 7, players, matchSec: opts.matchSec || 300 });
+  const s = new Sim({ seed: opts.seed || 7, players, matchSec: opts.matchSec || 300, map: opts.map });
   s.phase = 'play'; s.pt = s.timeLeft; s.startPlay();
   if (!opts.keepObstacles) s.map.obstacles.length = 0;
   if (!opts.keepCheese) { s.cheese.state = 'sea'; s.cheese.seaT = -1e9; s.cheese.x = 0; s.cheese.y = 0; }
@@ -42,6 +42,66 @@ for (const seed of [1, 2, 3, 42, 1234, 99999]) {
   ok(m.onLand(0, 0) && !m.onLand(2000, 0) && m.onLand(0, m.pier.y1 - 5), `seed ${seed}: land/hav/brygga`);
   const m2 = makeMap(seed);
   ok(JSON.stringify(m.obstacles) === JSON.stringify(m2.obstacles), `seed ${seed}: deterministisk`);
+}
+
+/* ---------------------------------------------------------------- torget */
+section('Karta: Torget i Paris');
+{
+  ok(MAP_ORDER.length === 2 && MAP_ORDER.every(k => MAPS[k] && MAPS[k].name && MAPS[k].desc), 'banlistan har två banor med namn och beskrivning');
+  ok(makeMap(5, 'ile').kind === 'ile' && makeMap(5, 'place').kind === 'place' && makeMap(5).kind === 'ile' && makeMap(5, 'finns-inte').kind === 'ile', 'makeMap väljer bana (okänd bana ger ön)');
+  const fixed = o => JSON.stringify(o.filter(x => x.t !== 'barrel').map(x => [x.t, x.v, x.x, x.y, x.r]));
+  const base = fixed(makeMap(1, 'place').obstacles);
+  for (const seed of [1, 2, 3, 42, 1234, 99999, 20261117]) {
+    const m = makeMap(seed, 'place'), cnt = {}; for (const o of m.obstacles) cnt[o.t] = (cnt[o.t] || 0) + 1;
+    const tag = `torg ${seed}`;
+    ok(m.spawns.length === 8 && m.spawns.every(sp => m.onLand(sp.x, sp.y)), `${tag}: åtta startplatser på land`);
+    ok(m.obstacles.every(o => m.onLand(o.x, o.y)), `${tag}: alla hinder på land`);
+    ok(m.obstacles.every(o => Math.hypot(o.x, o.y) > CFG.hillR + o.r), `${tag}: kullen är fri`);
+    ok(m.obstacles.every(o => !m.inPond(o.x, o.y, o.r)), `${tag}: bassängen är fri`);
+    ok(new Set(m.obstacles.map(o => o.id)).size === m.obstacles.length, `${tag}: unika hinder-id`);
+    let overlap = 0; for (let i = 0; i < m.obstacles.length; i++) for (let j = i + 1; j < m.obstacles.length; j++) { const a = m.obstacles[i], b = m.obstacles[j]; if (Math.hypot(a.x - b.x, a.y - b.y) < a.r + b.r - 6) overlap++; }
+    ok(overlap === 0, `${tag}: inga överlappande hinder (${overlap})`);
+    ok(m.spawns.every(sp => m.obstacles.every(o => Math.hypot(sp.x - o.x, sp.y - o.y) > o.r + 40)), `${tag}: startplatserna är fria`);
+    ok(fixed(m.obstacles) === base, `${tag}: fasta delar identiska oavsett seed`);
+    ok((cnt.stall || 0) === 6 && (cnt.column || 0) === 4 && cnt.carousel === 1 && cnt.tower === 1 && (cnt.kiosk || 0) === 4 && (cnt.tree || 0) === 12 && (cnt.cafe || 0) === 6, `${tag}: stånd, kolonner, karusell, torn, kiosker, träd och caféer (${JSON.stringify(cnt)})`);
+    ok((cnt.barrel || 0) >= 4, `${tag}: minst 4 tunnor (${cnt.barrel})`);
+    ok(m.onLand(0, 0) && !m.onLand(2000, 0) && !m.onLand(0, -2000), `${tag}: land/Seine`);
+    ok(m.pier === null && m.village === null, `${tag}: ingen brygga eller by`);
+    for (let k = 0; k < 24; k++) { const th = k / 24 * G.TAU, r = placeR(th); ok(m.onLand(Math.cos(th) * (r - 12), Math.sin(th) * (r - 12)) && !m.onLand(Math.cos(th) * (r + 12), Math.sin(th) * (r + 12)), `${tag}: kustlinjen stämmer i vinkel ${k}`); }
+    ok(JSON.stringify(m.obstacles) === JSON.stringify(makeMap(seed, 'place').obstacles), `${tag}: deterministisk`);
+  }
+  // Spegelsymmetri: ingen startplats har fördel av läget
+  const m = makeMap(7, 'place'), dist = m.spawns.map(sp => Math.hypot(sp.x, sp.y));
+  ok(Math.max(...dist) - Math.min(...dist) < 120, `startplatserna ligger ungefär lika långt från kullen (${Math.round(Math.min(...dist))}-${Math.round(Math.max(...dist))})`);
+  // Regler på torget
+  const s = mk(['baguette', 'poireau'], { map: 'place' });
+  ok(s.map.kind === 'place', 'simen kör torget när banan väljs');
+  const a = s.players[0], b = s.players[1];
+  put(a, 0, -300, 0); put(b, 0, 500, 0); a.inp.mx = 0; a.inp.my = 0;
+  s.cheese.state = 'ground'; s.cheese.x = 0; s.cheese.y = 0; s.cheese.carrier = -1; s.cheese.vx = s.cheese.vy = 0; s.cheese.air = 0; s.cheese.seaT = 0;
+  // en spelare utanför kajkanten drunknar efter en kort stund
+  put(b, 0, placeR(Math.PI / 2) + 60, 0); run(s, 1.4);
+  ok(b.st === 'ko' && b.koCause === 'drown', 'den som hamnar i Seine drunknar');
+  run(s, 3.2);
+  ok(b.st === 'alive' && s.map.onLand(b.x, b.y), 'och återuppstår på land');
+  // osten i Seine återställs till kullen
+  const c = s.cheese; c.state = 'sea'; c.x = 0; c.y = placeR(Math.PI / 2) + 80; c.seaT = 0; c.carrier = -1;
+  run(s, 6.5);
+  ok(c.state === 'ground' && Math.hypot(c.x, c.y) < CFG.hillR, 'osten som hamnar i Seine hamnar på kullen efter fem sekunder');
+  // kullen trycker ut osten på torget också
+  c.x = 20; c.y = 10; c.vx = c.vy = 0; run(s, 2.5);
+  ok(Math.hypot(c.x, c.y) > 40, 'kullen på torget puttar ut osten');
+  // förstörbara hinder
+  const pm = mk(['baguette', 'poireau'], { map: 'place', keepObstacles: true });
+  for (const t of ['stall', 'column', 'carousel', 'kiosk']) { const o = pm.map.obstacles.find(q => q.t === t); ok(!!o && o.hp > 0, `${t} har hållfasthet`); }
+}
+
+/* ---------------------------------------------------------------- botantal */
+section('Botantal');
+{
+  const t = (h, w, exp) => ok(botCount(h, w) === exp, `botCount(${h} människor, önskat ${w}) = ${botCount(h, w)} (väntat ${exp})`);
+  t(1, 7, 7); t(1, 0, 1); t(1, 3, 3); t(2, 0, 0); t(2, 7, 6); t(3, 7, 5); t(8, 7, 0); t(7, 0, 0); t(4, 2, 2); t(1, NaN, 1); t(1, -4, 1); t(1, 99, 7);
+  for (let h = 1; h <= 8; h++) for (let w = 0; w <= 7; w++) { const n = botCount(h, w); ok(h + n <= CFG.maxPlayers && n >= 0 && (h + n >= 2 || h + n === CFG.maxPlayers), `botCount ${h}/${w} inom gränserna`); }
 }
 
 /* ---------------------------------------------------------------- vapen */
@@ -152,6 +212,29 @@ section('Raket, stinkost, mina, blåsare, studsmatta');
   s.players[0].inp.wd = true; run(s, 2.2);
   ok(s.players[1].st === 'ko' && s.players[1].koCause === 'drown', 'lövblåsaren blåser ut någon i havet');
   ok(s.players[0].hits === 1, 'blåsaren får poäng för dopp');
+  // vindmätaren: den som blir kvar i luftströmmen blåses bort – men inte direkt, och man kan ta sig ur
+  s = mk(['souffleur', 'baguette']);
+  put(s.players[0], -300, 0, 0); put(s.players[1], -120, 0, Math.PI);
+  s.players[0].inp.wd = true; s.players[0].inp.mx = 1; run(s, 0.25);
+  ok(s.players[1].st === 'alive' && s.players[1].gale > 0.1 && s.players[1].gale < 1, 'vindmätaren fylls men ingen blåses bort direkt (' + s.players[1].gale.toFixed(2) + ')');
+  ok(s.makeView().players[1].gale > 0.1, 'vindmätaren finns i vyn');
+  run(s, 2.0);
+  ok(s.players[1].st === 'ko' && s.players[1].koCause === 'souffleur', 'den som blir kvar i vinden blåses bort (KO, orsak souffleur)');
+  ok(s.players[0].hits === 1 && s.players[1].gale === 0, 'blåsaren får träff och mätaren nollas');
+  s = mk(['souffleur', 'baguette']);
+  put(s.players[0], -300, 0, 0); put(s.players[1], -120, 0, Math.PI);
+  s.players[0].inp.wd = true; s.players[0].inp.mx = 1; s.players[1].inp.my = 1; s.players[1].inp.a = Math.PI / 2;
+  run(s, 2.5);
+  ok(s.players[1].st === 'alive', 'den som springer åt sidan slipper undan vinden');
+  s.players[0].inp.wd = false; s.players[0].inp.mx = 0; run(s, 1.0);
+  ok(s.players[1].gale === 0, 'vindmätaren töms när vinden upphör');
+  s = mk(['souffleur', 'baguette']);
+  put(s.players[0], -300, 0, 0); put(s.players[1], -150, 0, Math.PI); s.players[1].inv = 5;
+  s.players[0].inp.wd = true; s.players[0].inp.mx = 1; run(s, 1.5);
+  ok(s.players[1].st === 'alive' && s.players[1].gale === 0, 'skyddstid hindrar vindutslagning');
+  s = mk(['souffleur', 'baguette']);
+  put(s.players[0], -300, 0, 0); put(s.players[1], -150, 0, Math.PI); s.players[1].gale = 0.5;
+  { const d2 = decodeView(JSON.parse(JSON.stringify(encodeView(s.makeView())))); ok(Math.abs(d2.players[1].gale - 0.5) < 0.011, 'vindmätaren överlever kodeken'); }
   s = mk(['trampoline', 'baguette']);
   put(s.players[0], 300, 300, 0); put(s.players[1], 700, 300, 0);
   press(s.players[0]); run(s, 0.1);
@@ -182,7 +265,8 @@ section('Kodek för snapshots');
 
 /* ---------------------------------------------------------------- bot-matcher */
 const N = parseInt(process.argv[2]) || 24, STATS = process.argv.includes('--stats');
-section(`Bot-matcher (${N} st, 8 botar, 5 min)`);
+section(`Bot-matcher (${N} st, 8 botar, 5 min, banorna växlar)`);
+const perMap = {}; for (const k of MAP_ORDER) perMap[k] = { n: 0, kos: 0, score: 0, crashes: 0, noCheese: 0, carries: 0, drowned: 0 };
 const agg = { carryCause: {}, carries: [], kos: 0, cause: {}, steals: 0, seaTime: 0, crashes: 0, ties: 0, matches: 0, scoreSum: [], noCheese: [], pickups: 0 };
 const perW = {}; for (const w of WEAPON_ORDER) perW[w] = { n: 0, wins: 0, score: 0, hits: 0, kos: 0 };
 const t0 = Date.now();
@@ -190,15 +274,16 @@ for (let m = 0; m < N; m++) {
   const rnd = (() => { let a = m * 7919 + 13; return () => { a = (a * 1103515245 + 12345) & 0x7fffffff; return a / 0x7fffffff; }; })();
   const ws = WEAPON_ORDER.slice(); for (let i = ws.length - 1; i > 0; i--) { const j = (rnd() * (i + 1)) | 0; [ws[i], ws[j]] = [ws[j], ws[i]]; }
   const players = []; for (let i = 0; i < 8; i++) players.push({ id: i, name: 'B' + i, skin: i, weapon: ws[i], bot: true });
-  const s = new Sim({ seed: 1000 + m, players, matchSec: 300 });
+  const kind = MAP_ORDER[m % MAP_ORDER.length], pm = perMap[kind];
+  const s = new Sim({ seed: 1000 + m, players, matchSec: 300, map: kind });
   let lastDropper = -9, carryStart = -1, lastCarrier = -1, noCheeseT = 0, steps = 0, bad = null;
   while (!s.over && steps < 60 * 400) {
     s.step(DT); steps++;
     for (const e of s.drainEvents()) {
       if (e[0] === 'pick') { carryStart = s.time; if (lastCarrier !== -1 && lastCarrier !== e[1]) agg.steals++; lastCarrier = e[1]; agg.pickups++; }
       else if (e[0] === 'drop' && carryStart >= 0) { agg.carries.push(s.time - carryStart); carryStart = -1; lastDropper = e[1]; }
-      else if (e[0] === 'ko') { agg.kos++; agg.cause[e[3]] = (agg.cause[e[3]] || 0) + 1; if (e[1] === lastDropper) { agg.carryCause[e[3]] = (agg.carryCause[e[3]] || 0) + 1; lastDropper = -9; } }
-      else if (e[0] === 'crash') agg.crashes++;
+      else if (e[0] === 'ko') { agg.kos++; pm.kos++; if (e[3] === 'drown') pm.drowned++; agg.cause[e[3]] = (agg.cause[e[3]] || 0) + 1; if (e[1] === lastDropper) { agg.carryCause[e[3]] = (agg.carryCause[e[3]] || 0) + 1; lastDropper = -9; } }
+      else if (e[0] === 'crash') { agg.crashes++; pm.crashes++; }
     }
     if (s.phase === 'play' && s.cheese.state !== 'carried') noCheeseT += DT;
     if (steps % 120 === 0) {
@@ -207,11 +292,13 @@ for (let m = 0; m < N; m++) {
       if (bad) break;
     }
   }
-  ok(!bad, `match ${m}: ${bad || 'inga NaN'}`);
+  ok(!bad, `match ${m} (${kind}): ${bad || 'inga NaN'}`);
+  ok(s.map.kind === kind, `match ${m}: rätt bana (${kind})`);
   ok(s.over && s.results, `match ${m}: avslutades`);
   const total = s.players.reduce((a, p) => a + p.score, 0);
   ok(total <= s.matchSec + 0.5, `match ${m}: summerad ostid (${total.toFixed(1)}) <= matchtid`);
-  agg.noCheese.push(noCheeseT); agg.scoreSum.push(total); agg.matches++;
+  agg.noCheese.push(noCheeseT); agg.scoreSum.push(total); agg.matches++; pm.n++; pm.score += total; pm.noCheese += noCheeseT;
+  ok(s.players.every(p => s.map.onLand(p.x, p.y) || p.st !== 'alive' || Math.hypot(p.x, p.y) < 1600), `match ${m}: spelarna ligger inom banans omgivning`);
   for (const r of s.results.rank) { const w = perW[r.weapon]; w.n++; w.score += r.score; w.hits += r.hits; w.kos += r.kos; }
   perW[s.results.rank[0].weapon].wins++;
   const top = s.results.rank[0].score, second = s.results.rank[1].score;
@@ -220,6 +307,7 @@ for (let m = 0; m < N; m++) {
 const avg = a => a.length ? a.reduce((x, y) => x + y, 0) / a.length : 0;
 const med = a => { const b = a.slice().sort((x, y) => x - y); return b.length ? b[b.length >> 1] : 0; };
 console.log(`  tid: ${((Date.now() - t0) / 1000).toFixed(1)} s`);
+for (const k of MAP_ORDER) { const q = perMap[k]; if (q.n) console.log(`  bana ${k.padEnd(5)}: ${q.n} matcher  KO/match ${(q.kos / q.n).toFixed(0)}  drunknade/match ${(q.drowned / q.n).toFixed(1)}  ostbärartid ${(100 * q.score / q.n / 300).toFixed(0)}%  hinder förstörda/match ${(q.crashes / q.n).toFixed(1)}`); }
 console.log(`  ostbärningar: ${agg.carries.length} (snitt ${avg(agg.carries).toFixed(1)} s, median ${med(agg.carries).toFixed(1)} s, max ${Math.max(0, ...agg.carries).toFixed(1)} s)`);
 console.log(`  ägarbyten/match: ${(agg.steals / N).toFixed(1)}   KO/match: ${(agg.kos / N).toFixed(0)}  (per spelare och minut: ${(agg.kos / N / 8 / 5).toFixed(1)})`);
 console.log(`  andel av matchen någon bär osten: ${(100 * avg(agg.scoreSum) / 300).toFixed(0)}%   hinder förstörda/match: ${(agg.crashes / N).toFixed(1)}`);

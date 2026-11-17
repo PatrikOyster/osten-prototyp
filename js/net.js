@@ -74,13 +74,17 @@ const Net = (() => {
   function peerClientOpen(code, cb) {
     if (!hasPeer()) { cb({ error: 'PeerJS saknas (vendor/peerjs.min.js kunde inte laddas).' }); return null; }
     const peer = new Peer(undefined, peerOpts());
-    const h = { peer, close() { try { peer.destroy(); } catch (e) { /* ok */ } } };
+    const h = { peer, close() { clear(); try { peer.destroy(); } catch (e) { /* ok */ } } };
+    // Om rummet inte finns (fel/gammal kod) eller datakanalen aldrig öppnas (strikt nät) kommer annars inget svar alls.
+    let tm = null;
+    const clear = () => { if (tm) { clearTimeout(tm); tm = null; } };
     peer.on('open', () => {
       const dc = peer.connect('osten-' + code, { reliable: true, serialization: 'json' });
-      dc.on('open', () => cb({ ok: true, conn: wrapPeerConn(dc) }));
-      dc.on('error', e => cb({ error: String(e) }));
+      tm = setTimeout(() => { tm = null; cb({ error: 'open-timeout', type: 'open-timeout' }); try { peer.destroy(); } catch (e) { /* ok */ } }, 20000);
+      dc.on('open', () => { clear(); cb({ ok: true, conn: wrapPeerConn(dc) }); });
+      dc.on('error', e => { clear(); cb({ error: String(e) }); });
     });
-    peer.on('error', e => cb({ error: e.type || String(e), type: e.type }));
+    peer.on('error', e => { clear(); cb({ error: e.type || String(e), type: e.type }); });
     return h;
   }
 
@@ -140,7 +144,7 @@ class HostSession {
     this.me = 0;
     this.nextPid = 1;
     this.roster = [{ id: 0, name: o.name, skin: o.skin | 0, weapon: null, locked: false, bot: false, spec: false, conn: null }];
-    this.settings = { matchSec: 300, fill: true };
+    this.settings = { matchSec: 300, bots: 7, map: 'ile' };
     this.sim = null; this.acc = 0; this.snapAcc = 0; this.pend = [];
     this.startInfo = null; this.results = null;
     this.cb = {};
@@ -261,7 +265,8 @@ class HostSession {
   setSettings(s) {
     if (this.phase !== 'lobby') return;
     if (s.matchSec && [60, 120, 300].includes(s.matchSec)) this.settings.matchSec = s.matchSec;
-    if (typeof s.fill === 'boolean') this.settings.fill = s.fill;
+    if (Number.isInteger(s.bots)) this.settings.bots = clamp(s.bots, 0, CFG.maxPlayers - 1);
+    if (typeof s.map === 'string' && MAPS[s.map]) this.settings.map = s.map;
     this.broadcastLobby();
   }
 
@@ -274,14 +279,13 @@ class HostSession {
     const spare = [];
     for (let i = 0; i < SKINS.length; i++) if (!usedSkins.has(i)) spare.push(i);
     const names = BOT_NAMES.slice().sort(() => Math.random() - 0.5).filter(n => !usedNames.has(n));
-    let nb = this.settings.fill ? Math.max(0, CFG.maxPlayers - players.length) : (players.length < 2 ? 1 : 0);
-    nb = Math.min(nb, spare.length);
+    const nb = Math.min(botCount(players.length, this.settings.bots), spare.length);
     for (let i = 0; i < nb; i++) {
       players.push({ id: 100 + i, name: names[i] || 'Bot ' + (i + 1), skin: spare[i], weapon: WEAPON_ORDER[(Math.random() * WEAPON_ORDER.length) | 0], bot: true });
     }
     const seed = (Math.random() * 0xFFFFFFFF) >>> 0;
-    this.sim = new Sim({ seed, players, matchSec: this.settings.matchSec });
-    this.startInfo = { seed, matchSec: this.settings.matchSec, players: players.map(p => ({ id: p.id, name: p.name, skin: p.skin, weapon: p.weapon, bot: p.bot })) };
+    this.sim = new Sim({ seed, map: this.settings.map, players, matchSec: this.settings.matchSec });
+    this.startInfo = { seed, map: this.settings.map, matchSec: this.settings.matchSec, players: players.map(p => ({ id: p.id, name: p.name, skin: p.skin, weapon: p.weapon, bot: p.bot })) };
     this.phase = 'match'; this.acc = 0; this.snapAcc = 0; this.pend = []; this.results = null;
     for (const r of this.roster) if (r.conn) r.conn.send({ t: 'start', info: this.startInfo });
     this.cb.start && this.cb.start(this.startInfo);
@@ -345,7 +349,7 @@ class ClientSession {
     this.code = o.code;
     this.phase = 'connecting';
     this.me = -1; this.spec = false;
-    this.roster = []; this.settings = { matchSec: 300, fill: true };
+    this.roster = []; this.settings = { matchSec: 300, bots: 7, map: 'ile' };
     this.myWeapon = null; this.locked = false;
     this.cb = {};
     this.conn = null; this.link = null;
@@ -362,6 +366,7 @@ class ClientSession {
     this.link = Net.clientOpen(this.code, r => {
       if (r.error) {
         fin(r.type === 'peer-unavailable' ? 'Hittar inget rum med koden ' + this.code + '.' :
+          r.type === 'open-timeout' ? 'Fick ingen kontakt med rum ' + this.code + '. Kolla koden och att värden har spelet öppet och synligt – och försök igen.' :
           r.type === 'network' || r.type === 'server-error' || r.type === 'socket-error' ? 'Kunde inte nå signalservern.' : 'Anslutningen misslyckades (' + r.error + ').');
         return;
       }
@@ -389,8 +394,8 @@ class ClientSession {
         this.me = m.spec ? -1 : m.pid; this.mePid = m.pid; this.spec = m.spec;
         this.roster = m.roster; this.settings = m.settings; this.code = m.code || this.code;
         this.phase = m.phase === 'lobby' ? 'lobby' : 'match';
+        if (m.start) this.beginMatch(m.start);   // före fin(): den som ansluter mitt i en match ska hamna i matchen, inte i lobbyn
         fin(null);
-        if (m.start) this.beginMatch(m.start);
         this.cb.lobby && this.cb.lobby(this.lobbyState());
         this.pingT = setInterval(() => this.send({ t: 'ping', ts: performance.now() }), 2000);
         this.send({ t: 'ping', ts: performance.now() });
@@ -431,7 +436,7 @@ class ClientSession {
 
   beginMatch(info) {
     this.phase = 'match'; this.startInfo = info;
-    this.map = makeMap(info.seed);
+    this.map = makeMap(info.seed, info.map);
     this.metaById = new Map(info.players.map(p => [p.id, p]));
     this.buf = []; this.offset = null; this.dead = new Set(); this.pred = null;
     this.world = { map: this.map, dead: this.dead };

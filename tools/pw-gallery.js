@@ -9,13 +9,13 @@ const outFile = path.resolve(process.argv[2] || '/tmp/shots/gallery.png');
 (async () => {
   const srv = await new Promise(r => start(0, (s, p) => r({ s, p })));
   const browser = await chromium.launch();
-  const page = await browser.newPage({ viewport: { width: 1700, height: 1100 }, deviceScaleFactor: 1 });
+  const page = await browser.newPage({ viewport: { width: 1700, height: 1340 }, deviceScaleFactor: 1 });
   const errors = []; page.on('pageerror', e => errors.push(e.message));
   await page.goto('http://localhost:' + srv.p + '/'); await new Promise(r => setTimeout(r, 600));
   await page.evaluate(() => {
-    document.body.innerHTML = '<canvas id="g" width="1700" height="1100" style="display:block;background:#8fd16f"></canvas>';
+    document.body.innerHTML = '<canvas id="g" width="1700" height="1340" style="display:block;background:#8fd16f"></canvas>';
     const c = document.getElementById('g').getContext('2d');
-    c.fillStyle = '#8fd16f'; c.fillRect(0, 0, 1700, 1100);
+    c.fillStyle = '#8fd16f'; c.fillRect(0, 0, 1700, 1340);
     // rad 1: vapenikoner
     WEAPON_ORDER.forEach((id, i) => { drawWeaponIcon(c, id, 40 + i * 138, 50, 1.0, 0, 0.3); });
     // rad 2: karaktärer med vapen i olika lägen
@@ -45,8 +45,13 @@ const outFile = path.resolve(process.argv[2] || '/tmp/shots/gallery.png');
     drawArea(c, { k: 'pad', x: 1220, y: 900, r: 56, f: 1, a: 0.4 }, 0.4);
     drawCheese(c, 1380, 900, 0.4, 0, 1); drawCheese(c, 1450, 900, 1.2, 30, 1.3);
     drawFlagPole(c, 1560, 930, 0.5);
+    // rad 6: torgets hinder (stånd, kolonn, karusell, kiosk) och deras spillror
+    c.fillStyle = '#e9dcbc'; c.fillRect(0, 1060, 1700, 280);
+    const pobs = [{ t: 'stall', v: 'fromage' }, { t: 'stall', v: 'fruits' }, { t: 'stall', v: 'pain' }, { t: 'stall', v: 'fleurs' }, { t: 'column' }, { t: 'carousel' }, { t: 'kiosk' }];
+    pobs.forEach((o, i) => { const ob = Object.assign({ id: i + 60, x: 100 + i * 190 + (i > 4 ? 50 : 0), y: 1240 }, o); drawObstacle(c, ob, 0.5); });
+    [{ t: 'stall' }, { t: 'column' }, { t: 'carousel' }, { t: 'kiosk' }].forEach((o, i) => drawRubble(c, Object.assign({ id: 80 + i, x: 1500 + (i % 2) * 110, y: 1170 + Math.floor(i / 2) * 100 }, o)));
     c.fillStyle = '#143'; c.font = '13px sans-serif';
-    c.fillText('vapen (rad 1) · skins + vapen (rad 2) · lägen: spring, bär ost, KO, luft, tackling, sving, vakt, yr, stank, blås (rad 3) · hinder + spillror (rad 4) · projektiler, områden, ost (rad 5)', 20, 1085);
+    c.fillText('vapen (rad 1) · skins + vapen (rad 2) · lägen: spring, bär ost, KO, luft, tackling, sving, vakt, yr, stank, blås (rad 3) · hinder + spillror (rad 4) · projektiler, områden, ost (rad 5) · torgets hinder (rad 6)', 20, 1325);
   });
   await page.screenshot({ path: outFile });
   console.log('saved', outFile, 'errors', errors);

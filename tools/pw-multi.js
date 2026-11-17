@@ -8,6 +8,8 @@ const { start } = require('./serve.js');
 const out = path.resolve(process.argv[2] || '/tmp/shots'); fs.mkdirSync(out, { recursive: true });
 const LAG = +process.argv[3] || 0;
 const sleep = ms => new Promise(r => setTimeout(r, ms));
+let fails = 0;
+const check = (ok, msg) => { if (!ok) { fails++; console.log('  FAIL', msg); } else console.log('  ok  ', msg); };
 
 (async () => {
   const srv = await new Promise(r => start(0, (s, p) => r({ s, p })));
@@ -37,10 +39,24 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   await A.click('.wcard[data-w="feu"]'); await A.click('#btn-lock'); await sleep(400);
   console.log('start knapp efter båda låsta:', await A.evaluate(() => !document.getElementById('btn-start').disabled));
   await shot(A, 'm1-lobby-host'); await shot(B, 'm2-lobby-client');
+  // bana och botantal: värden bestämmer, gästen ser valet och bakgrunden byter bana
+  check(await B.evaluate(() => UI.lobby.settings.map) === 'ile' && await B.evaluate(() => App.renderer.map.kind) === 'ile', 'gästen börjar på ön');
+  await B.click('.mapcard[data-m="place"]', { force: true }); await sleep(400);
+  check(await A.evaluate(() => UI.lobby.settings.map) === 'ile', 'gästen kan inte byta bana');
+  await A.click('.mapcard[data-m="place"]'); await sleep(900);
+  check(await A.evaluate(() => UI.lobby.settings.map) === 'place' && await A.evaluate(() => App.renderer.map.kind) === 'place', 'värden valde torget (inställning + bakgrund)');
+  check(await B.evaluate(() => UI.lobby.settings.map) === 'place' && await B.evaluate(() => App.renderer.map.kind) === 'place', 'gästens lobby följer med: torget valt, bakgrunden bytt');
+  check(await B.evaluate(() => document.querySelector('.mapcard.on').dataset.m) === 'place' && await B.evaluate(() => document.querySelector('.mapcard').classList.contains('dis')), 'gästens bankort visar valet men är låsta');
+  await A.click('#bots-minus'); await A.click('#bots-minus'); await sleep(400);
+  check(await B.evaluate(() => document.getElementById('bots-n').textContent) === '4' && await B.evaluate(() => document.getElementById('bots-minus').disabled), 'botantalet (7 önskade, 6 lediga platser, minus två klick = 4) syns för gästen men kan inte ändras där');
+  await shot(A, 'm1b-lobby-host-place'); await shot(B, 'm2b-lobby-client-place');
   await A.evaluate(() => UI.h.settings({ matchSec: 60 }));
   await A.click('#btn-start');
   await sleep(1500);
   console.log('states', await A.evaluate(() => App.state), await B.evaluate(() => App.state));
+  check(await A.evaluate(() => App.session.sim.map.kind) === 'place' && await B.evaluate(() => App.session.map.kind) === 'place' && await B.evaluate(() => App.renderer.map.kind) === 'place', 'båda spelar på torget');
+  check(await A.evaluate(() => App.session.sim.players.length) === 6, 'sex spelare: två människor + fyra botar');
+  check(await B.evaluate(() => JSON.stringify(App.session.map.obstacles) === JSON.stringify(App.session.map.obstacles) && App.session.map.obstacles.length) === await A.evaluate(() => App.session.sim.map.obstacles.length), 'klienten har samma hinder som värden');
   await shot(B, 'm3-reveal-client');
   await sleep(8000);   // reveal 5 s + count 3 s
   await shot(A, 'm4-play-host'); await shot(B, 'm5-play-client');
@@ -70,6 +86,9 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   console.log('knapp "Spela igen" host:', await A.isVisible('#btn-again'), ' klient:', await B.isVisible('#btn-again'));
   await A.click('#btn-again'); await sleep(700);
   console.log('tillbaka i lobby:', await A.evaluate(() => App.state), await B.evaluate(() => App.state));
+  check(await A.evaluate(() => UI.lobby.settings.map) === 'place' && await B.evaluate(() => UI.lobby.settings.map) === 'place', 'banvalet finns kvar efter Spela igen');
   console.log('ERRORS', errors.length); for (const e of errors.slice(0, 20)) console.log('  ', e);
+  console.log(fails || errors.length ? 'RESULT: FAIL' : 'RESULT: OK');
   await browser.close(); srv.s.close();
+  process.exit(fails || errors.length ? 1 : 0);
 })().catch(e => { console.error('FAIL', e); process.exit(1); });

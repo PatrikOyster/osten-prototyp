@@ -19,6 +19,9 @@ const UI = {
     this.h = h;
     this.linkBase = location.protocol === 'file:' ? location.href.split('#')[0].split('?')[0] : location.origin + location.pathname;
     $('ver').textContent = 'v' + GAME_VERSION;
+    // telefon/platta utan mus: spelet kräver tangentbord och mus (mobil är uppskjutet)
+    const coarse = !!window.matchMedia && matchMedia('(pointer: coarse)').matches && !matchMedia('(any-pointer: fine)').matches;
+    $('touch-note').classList.toggle('hidden', !coarse);
     // titel: figurer
     const row = $('title-chars');
     for (let i = 0; i < SKINS.length; i++) { const cv = document.createElement('canvas'); cv.width = 116; cv.height = 156; drawPortrait(cv, i, { a: 0.4 }); row.appendChild(cv); }
@@ -33,6 +36,7 @@ const UI = {
     nm.addEventListener('input', () => Store.set('name', nm.value.trim()));
     // lobby
     this.buildWeapons();
+    this.buildMaps();
     $('btn-lock').onclick = () => { if (this.sel) h.pick(this.sel); };
     $('btn-start').onclick = () => h.start();
     $('btn-leave').onclick = () => h.leave();
@@ -43,10 +47,37 @@ const UI = {
     $('btn-copy').onclick = () => this.copyLink();
     $('room-link').addEventListener('focus', e => e.target.select());
     for (const b of $('seg-len').querySelectorAll('button')) b.onclick = () => { if (this.lobby && this.lobby.host) h.settings({ matchSec: +b.dataset.v }); };
-    for (const b of $('seg-fill').querySelectorAll('button')) b.onclick = () => { if (this.lobby && this.lobby.host) h.settings({ fill: b.dataset.v === '1' }); };
+    $('bots-minus').onclick = () => this.stepBots(-1);
+    $('bots-plus').onclick = () => this.stepBots(1);
     const ln = $('lobby-name');
     ln.addEventListener('change', () => { Store.set('name', ln.value.trim()); nm.value = ln.value.trim(); h.profile(ln.value.trim(), this.mySkin()); });
     ln.addEventListener('keydown', e => { if (e.key === 'Enter') ln.blur(); });
+  },
+
+  /* Banväljare: ett kort per bana med förhandsbild. Värden väljer, övriga ser valet. */
+  buildMaps() {
+    const box = $('map-sel'); box.innerHTML = '';
+    for (const id of MAP_ORDER) {
+      const m = MAPS[id], b = document.createElement('button');
+      b.type = 'button'; b.className = 'mapcard'; b.dataset.m = id; b.title = m.desc;
+      const cv = document.createElement('canvas'); cv.width = 256; cv.height = 144; drawMapThumb(cv, id);
+      const t = document.createElement('span'); t.className = 'mc-t'; t.textContent = m.name;
+      const sm = document.createElement('small'); sm.textContent = m.fr; t.appendChild(sm);
+      b.appendChild(cv); b.appendChild(t);
+      b.onclick = () => { const st = this.lobby; if (st && st.host && st.settings.map !== id) { this.h.settings({ map: id }); SFX.play('click'); } };
+      box.appendChild(b);
+    }
+  },
+
+  /* Botantal: det som visas är det som blir (värdens önskan, begränsad av lediga platser). */
+  botsInfo(st) {
+    const humans = st.players.filter(p => !p.bot && !p.spec).length;
+    return { humans, eff: botCount(humans, st.settings.bots), min: humans < 2 ? 1 : 0, max: Math.max(0, CFG.maxPlayers - humans) };
+  },
+  stepBots(d) {
+    const st = this.lobby; if (!st || !st.host) return;
+    const b = this.botsInfo(st), n = clamp(b.eff + d, b.min, b.max);
+    if (n !== b.eff) { this.h.settings({ bots: n }); SFX.play('click'); }
   },
 
   name() {
@@ -128,10 +159,15 @@ const UI = {
     }
     // inställningar
     const host = st.host, set = st.settings;
+    for (const b of $('map-sel').children) { b.classList.toggle('on', b.dataset.m === set.map); b.classList.toggle('dis', !host); }
     for (const b of $('seg-len').querySelectorAll('button')) b.classList.toggle('on', +b.dataset.v === set.matchSec);
-    for (const b of $('seg-fill').querySelectorAll('button')) b.classList.toggle('on', (b.dataset.v === '1') === !!set.fill);
-    $('seg-len').classList.toggle('dis', !host); $('seg-fill').classList.toggle('dis', !host);
-    $('row-fill').classList.toggle('hidden', st.role === 'solo');
+    $('seg-len').classList.toggle('dis', !host);
+    const bi = this.botsInfo(st);
+    $('bots-n').textContent = bi.eff;
+    $('bots-minus').disabled = !host || bi.eff <= bi.min;
+    $('bots-plus').disabled = !host || bi.eff >= bi.max;
+    $('step-bots').classList.toggle('dis', !host);
+    $('bots-note').textContent = 'Matchen blir ' + (bi.humans + bi.eff) + ' spelare: ' + bi.humans + (bi.humans === 1 ? ' människa' : ' människor') + ' + ' + bi.eff + (bi.eff === 1 ? ' bot' : ' botar') + (bi.humans < 2 && bi.eff === 1 ? ' (en ensam spelare får alltid minst en motståndare)' : '') + '.';
     // start
     const humans = st.players.filter(p => !p.bot && !p.spec), done = humans.filter(p => p.locked).length;
     const bs = $('btn-start');
@@ -140,7 +176,7 @@ const UI = {
     bs.textContent = st.canStart ? 'Starta matchen!' : (st.locked ? 'Väntar på de andra (' + done + '/' + humans.length + ')…' : 'Lås in ditt vapen för att kunna starta');
     const ro = $('row-ro');
     ro.classList.toggle('hidden', host);
-    $('ro-text').textContent = host ? '' : (st.locked ? 'Väntar på att värden startar (' + done + '/' + humans.length + ' klara)…' : 'Värden bestämmer matchlängd och bottar.');
+    $('ro-text').textContent = host ? '' : (st.locked ? 'Väntar på att värden startar (' + done + '/' + humans.length + ' klara)…' : 'Värden bestämmer bana, matchlängd och botar.');
     $('btn-leave').textContent = host && multi ? 'Stäng rummet' : st.role === 'solo' ? 'Tillbaka' : 'Lämna rummet';
     this.updateWeaponUI();
     // tröjor
@@ -212,7 +248,7 @@ const UI = {
       r.append(cv, nm, sc, ch); board.appendChild(r); h.rows.set(p.id, { el: r, sc, last: -1, rank: -1, has: false });
     }
     $('feed').innerHTML = ''; $('banner').className = ''; $('bigcount').textContent = '';
-    $('ko-box').classList.add('hidden'); $('spec-tag').classList.toggle('hidden', !spec);
+    $('ko-box').classList.add('hidden'); $('gale-box').classList.add('hidden'); h.galeOn = false; h.galeV = -1; $('spec-tag').classList.toggle('hidden', !spec);
     $('ring-weapon').classList.toggle('hidden', spec); $('ring-tackle').classList.toggle('hidden', spec);
     const mine = h.meta.get(me);
     if (mine && !spec) {
@@ -328,6 +364,10 @@ const UI = {
       let badge = '';
       if (W.ammo) badge = String(Math.round(me.m)); else if (W.kind === 'mine' || W.kind === 'pad') badge = Math.round(me.m) + '/' + W.max;
       if (badge !== h.badge) { h.badge = badge; const b = $('hud-badge'); b.textContent = badge; b.classList.toggle('hidden', !badge); }
+      // vindmätare (lövblåsaren): varning när man håller på att blåsas bort
+      const gv = Math.round(clamp(me.gale || 0, 0, 1) * 100), gon = me.st === 0 && gv >= 12;
+      if (gon !== h.galeOn) { h.galeOn = gon; $('gale-box').classList.toggle('hidden', !gon); }
+      if (gon && gv !== h.galeV) { h.galeV = gv; $('gale-fill').style.width = gv + '%'; $('gale-box').classList.toggle('hot', gv >= 70); }
       // utslagen-ruta
       const kb = $('ko-box');
       if (me.st === 1 && h.ko) {
@@ -364,30 +404,95 @@ const UI = {
 
   /* ------------------------------------------------------------------ Resultat */
   showResults(res, meta, me, canRestart) {
-    const hmeta = new Map(meta.map(p => [p.id, p])), w = res.rank[0];
-    $('res-title').textContent = w.name + (w.id === me ? ' – det var du!' : ' vinner osten!');
-    $('res-sub').textContent = w.score.toFixed(1) + ' sekunder med osten, längsta svit ' + w.best.toFixed(1) + ' s.';
-    drawPortrait($('res-winner'), w.skin, { carry: true, a: 0.4 });
+    const rank = res.rank, n = rank.length, w = rank[0], fmt = v => v.toFixed(1);
+    const won = w.id === me, nobody = !(w.score > 0), myIdx = rank.findIndex(r => r.id === me);
+    const title = $('res-title');
+    title.textContent = nobody ? 'Ingen fick tag i osten' : won ? 'DU VANN!' : w.name.toUpperCase() + ' VINNER!';
+    title.classList.toggle('long', title.textContent.length > 14);
+    $('res-kicker').textContent = nobody ? 'Oavgjort' : won ? 'Grattis, mästare!' : 'Vinnare';
+    $('res-sub').textContent = nobody ? 'Ingen hann hålla i osten den här gången.'
+      : fmt(w.score) + ' sekunder med osten, längsta svit ' + fmt(w.best) + ' s.' + (!won && myIdx > 0 ? ' Du kom på plats ' + (myIdx + 1) + ' av ' + n + '.' : '');
+    $('res-stage').classList.toggle('nowin', nobody);
+    this.buildPodium(rank, me, nobody);
     const tb = $('res-table');
     tb.innerHTML = '<tr><th>#</th><th>Spelare</th><th>Vapen</th><th>Tid med osten</th><th>Längsta svit</th><th>Utslagen</th><th>Träffar</th></tr>';
-    res.rank.forEach((r, i) => {
-      const tr = document.createElement('tr'); tr.className = (i === 0 ? 'win ' : '') + (r.id === me ? 'me' : '');
+    rank.forEach((r, i) => {
+      const tr = document.createElement('tr'); tr.className = (i === 0 && !nobody ? 'win ' : '') + (r.id === me ? 'me' : '');
       tr.innerHTML = '<td></td><td class="nm"><div><canvas width="68" height="68"></canvas><span></span></div></td><td class="wp"><canvas width="108" height="60"></canvas></td><td></td><td></td><td></td><td></td>';
       const c = tr.children;
       c[0].textContent = i + 1;
       drawPortrait(c[1].querySelector('canvas'), r.skin);
       c[1].querySelector('span').textContent = r.name + (r.bot ? ' (bot)' : '') + (r.id === me ? ' (du)' : '');
+      if (i === 0 && !nobody) { const cr = document.createElement('canvas'); cr.className = 'crown-s'; cr.width = 52; cr.height = 36; drawCrown(cr); c[1].firstChild.appendChild(cr); }
       drawWeaponTo(c[2].querySelector('canvas'), r.weapon, {});
-      c[3].textContent = r.score.toFixed(1) + ' s'; c[4].textContent = r.best.toFixed(1) + ' s'; c[5].textContent = r.kos; c[6].textContent = r.hits;
+      c[3].textContent = fmt(r.score) + ' s'; c[4].textContent = fmt(r.best) + ' s'; c[5].textContent = r.kos; c[6].textContent = r.hits;
       tb.appendChild(tr);
     });
     $('btn-again').classList.toggle('hidden', !canRestart);
     $('res-wait').textContent = canRestart ? '' : 'Väntar på att värden startar en ny omgång…';
     const cf = $('confetti'); cf.innerHTML = '';
-    const COL = ['#2442a8', '#ffffff', '#d62839', '#ffd23f'];
-    for (let i = 0; i < 46; i++) { const e = document.createElement('i'); e.style.left = (Math.random() * 100) + '%'; e.style.background = COL[i % 4]; e.style.animationDuration = (3 + Math.random() * 3.5) + 's'; e.style.animationDelay = (-Math.random() * 6) + 's'; e.style.width = (7 + Math.random() * 7) + 'px'; cf.appendChild(e); }
+    const COL = ['#2442a8', '#ffffff', '#d62839', '#ffd23f', '#5f7ff0', '#ff8fa3'];
+    for (let i = 0; i < (nobody ? 24 : 70); i++) {
+      const e = document.createElement('i'); if (i % 4 === 1) e.className = 'c'; else if (i % 7 === 3) e.className = 's';
+      e.style.left = (Math.random() * 100) + '%'; e.style.background = COL[i % COL.length];
+      e.style.animationDuration = (3 + Math.random() * 3.5) + 's'; e.style.animationDelay = (-Math.random() * 6) + 's'; e.style.width = (6 + Math.random() * 7) + 'px';
+      if (e.className === 'c') e.style.height = e.style.width;
+      cf.appendChild(e);
+    }
     this.screen('results');
     $('hud').classList.add('hidden');
+    clearTimeout(this._resFx);
+    if (!nobody) this._resFx = setTimeout(() => { if ($('results').classList.contains('hidden')) return; SFX.play('fanfare'); this.burst(); }, 1500);
+  },
+
+  /* Prispallen: andraplatsen till vänster, vinnaren i mitten och högst, trean till höger. */
+  buildPodium(rank, me, nobody) {
+    const box = $('podium'); box.innerHTML = '';
+    const delay = [0.8, 0.4, 0.1];
+    for (const i of [1, 0, 2].filter(k => k < rank.length)) {
+      const r = rank[i], champ = i === 0 && !nobody;
+      const d = document.createElement('div');
+      d.className = 'pod p' + (i + 1) + (champ ? ' champ' : '') + (r.id === me ? ' me' : '');
+      d.style.setProperty('--d', delay[i] + 's');
+      d.innerHTML = '<div class="fig"><canvas class="pcv"></canvas></div><div class="step"><b class="rk"></b><span class="pn"></span><span class="pt"></span></div>';
+      const pc = d.querySelector('.pcv'); pc.width = champ ? 204 : 130; pc.height = champ ? 233 : 148;
+      drawPortrait(pc, r.skin, { carry: champ, a: 0.4 });
+      d.querySelector('.rk').textContent = i + 1;
+      const pn = d.querySelector('.pn'); pn.textContent = r.name + (r.id === me ? ' (du)' : ''); pn.title = r.name;
+      d.querySelector('.pt').textContent = r.score.toFixed(1) + ' s';
+      if (champ) {
+        const cr = document.createElement('canvas'); cr.className = 'crown'; cr.width = 172; cr.height = 114; drawCrown(cr);
+        d.querySelector('.fig').appendChild(cr);
+        for (let k = 0; k < 8; k++) {
+          const sp = document.createElement('i'); sp.className = 'sp';
+          const a = k / 8 * Math.PI * 2 + 0.3, rx = 46 + (k % 3) * 9, ry = 46 + (k % 2) * 14;
+          sp.style.left = (50 + Math.cos(a) * rx) + '%'; sp.style.top = (38 + Math.sin(a) * ry) + '%';
+          sp.style.setProperty('--sd', (2.1 + k * 0.23) + 's'); sp.style.width = sp.style.height = (11 + (k % 3) * 5) + 'px';
+          d.appendChild(sp);
+        }
+      }
+      box.appendChild(d);
+    }
+  },
+
+  /* Konfettiskur som skjuts upp från vinnaren */
+  burst() {
+    if (window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    const cf = $('confetti'), el = document.querySelector('#podium .champ .pcv'); if (!cf || !el || !el.animate) return;
+    const r = el.getBoundingClientRect(), cx = r.left + r.width / 2, cy = r.top + r.height * 0.28;
+    const COL = ['#2442a8', '#ffffff', '#d62839', '#ffd23f', '#5f7ff0', '#ff8fa3'];
+    for (let i = 0; i < 46; i++) {
+      const e = document.createElement('i'); e.className = 'b' + (i % 3 === 0 ? ' c' : i % 5 === 0 ? ' s' : '');
+      e.style.background = COL[i % COL.length]; e.style.left = cx + 'px'; e.style.top = cy + 'px';
+      cf.appendChild(e);
+      const ang = -Math.PI / 2 + (Math.random() - 0.5) * 2.7, sp = 170 + Math.random() * 430, dx = Math.cos(ang) * sp, dy = Math.sin(ang) * sp, rot = (Math.random() - 0.5) * 900;
+      const a = e.animate([
+        { transform: 'translate(0px, 0px) rotate(0deg)', opacity: 1 },
+        { transform: 'translate(' + dx + 'px, ' + dy + 'px) rotate(' + rot * 0.6 + 'deg)', opacity: 1, offset: 0.45 },
+        { transform: 'translate(' + dx * 1.15 + 'px, ' + (dy + 440) + 'px) rotate(' + rot + 'deg)', opacity: 0 }
+      ], { duration: 1500 + Math.random() * 1300, easing: 'cubic-bezier(.2,.6,.4,1)', fill: 'forwards' });
+      a.onfinish = () => e.remove();
+    }
   }
 };
 

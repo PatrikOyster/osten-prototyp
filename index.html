@@ -21,6 +21,11 @@
     <div class="ko-t" id="ko-t"></div>
     <div class="ko-s" id="ko-s"></div>
   </div>
+  <div id="gale-box" class="hidden">
+    <div class="gale-h">Vinden tar dig!</div>
+    <div class="gale-bar"><i id="gale-fill"></i></div>
+    <div class="gale-s">Spring åt sidan eller tackla dig loss</div>
+  </div>
   <div id="spec-tag" class="hidden">Du tittar på</div>
   <div id="bottom-hud">
     <div class="ring" id="ring-weapon" title="Vapen">
@@ -56,6 +61,8 @@
     <p class="tagline">Osten på ön &ndash; en ostrullartävling som gått alldeles för långt</p>
     <div id="title-chars"></div>
 
+    <p id="touch-note" class="touch-note hidden">Spelet är gjort för dator med tangentbord och mus. Öppna länken på en dator för att spela – mobil kommer senare.</p>
+
     <div class="invite hidden" id="invite">Du är inbjuden till rum <b id="invite-code">----</b></div>
 
     <label class="field"><span>Ditt namn</span>
@@ -64,7 +71,7 @@
 
     <div class="btn-row" id="main-btns">
       <button id="btn-host" class="btn primary">Skapa rum</button>
-      <button id="btn-solo" class="btn">Spela själv mot bottar</button>
+      <button id="btn-solo" class="btn">Spela själv mot botar</button>
     </div>
     <div class="join-row">
       <input id="code" maxlength="4" placeholder="KOD" autocomplete="off" spellcheck="false">
@@ -87,18 +94,24 @@
           <input id="room-link" readonly>
           <button id="btn-copy" class="btn small">Kopiera länk</button>
         </div>
-        <p class="hint">Skicka länken till kompisarna. Max 8 spelare, resten fylls med bottar.</p>
+        <p class="hint">Skicka länken till kompisarna. Max 8 spelare. Fyll gärna upp med botar.</p>
       </div>
       <div id="player-list"></div>
       <div id="settings">
+        <div class="set-row col" id="row-map"><span>Bana</span>
+          <div class="mapsel" id="map-sel"></div>
+        </div>
         <div class="set-row"><span>Matchlängd</span>
           <div class="seg" id="seg-len">
             <button data-v="60">1 min</button><button data-v="120">2 min</button><button data-v="300">5 min</button>
           </div>
         </div>
-        <div class="set-row" id="row-fill"><span>Fyll med bottar</span>
-          <div class="seg" id="seg-fill"><button data-v="1">Ja</button><button data-v="0">Nej</button></div>
+        <div class="set-row" id="row-bots"><span>Antal botar</span>
+          <div class="stepper" id="step-bots">
+            <button id="bots-minus" aria-label="Färre botar">&minus;</button><b id="bots-n">7</b><button id="bots-plus" aria-label="Fler botar">+</button>
+          </div>
         </div>
+        <p class="set-note" id="bots-note"></p>
         <div class="set-row ro hidden" id="row-ro"><span id="ro-text"></span></div>
       </div>
       <button id="btn-start" class="btn primary big" disabled>Starta matchen</button>
@@ -126,20 +139,24 @@
 <div id="results" class="screen hidden">
   <div class="panel results-panel">
     <div class="flagbar"></div>
-    <div class="win-box">
-      <canvas id="res-winner" width="150" height="170"></canvas>
-      <div>
-        <div class="win-sub">Vinnare</div>
+    <div class="res-stage" id="res-stage">
+      <div class="rays"></div>
+      <div class="res-head">
+        <div class="win-sub" id="res-kicker">Vinnare</div>
         <h2 id="res-title">—</h2>
-        <p id="res-sub" class="hint"></p>
+        <p id="res-sub"></p>
       </div>
+      <div id="podium"></div>
     </div>
-    <table id="res-table"></table>
-    <div class="btn-row">
-      <button id="btn-again" class="btn primary">Spela igen</button>
-      <button id="btn-leave2" class="btn">Lämna</button>
+    <div class="res-side">
+      <h3>Alla tider</h3>
+      <table id="res-table"></table>
+      <div class="btn-row">
+        <button id="btn-again" class="btn primary">Spela igen</button>
+        <button id="btn-leave2" class="btn">Lämna</button>
+      </div>
+      <p id="res-wait" class="hint"></p>
     </div>
-    <p id="res-wait" class="hint"></p>
   </div>
   <div id="confetti"></div>
 </div>

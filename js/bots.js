@@ -50,7 +50,7 @@ Sim.prototype.botPlan = function (p, ai, W) {
     }
     const rd = Math.hypot(p.x, p.y) || 1;
     fx += -p.y / rd * ai.orb * 0.8; fy += p.x / rd * ai.orb * 0.8;
-    const edge = coastR(Math.atan2(p.y, p.x)) - 330;
+    const edge = this.map.coastR(Math.atan2(p.y, p.x)) - this.map.fleeMargin;
     if (rd > edge) { const k = Math.min(3, (rd - edge) / 80); fx -= p.x / rd * k; fy -= p.y / rd * k; }
     const l = Math.hypot(fx, fy) || 1;
     ai.dx = fx / l; ai.dy = fy / l;

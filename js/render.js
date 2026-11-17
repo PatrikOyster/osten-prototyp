@@ -12,12 +12,12 @@ function hash2(a, b) {
   return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
 }
 
-function coastPath(c, off, wob, t) {
+function coastPath(c, off, wob, t, fn) {
   c.beginPath();
-  const N = 200;
+  const N = 200, cr = fn || coastR;
   for (let i = 0; i <= N; i++) {
     const th = i / N * TAU;
-    let r = coastR(th) + off;
+    let r = cr(th) + off;
     if (wob) r += Math.sin(th * 9 + t * 1.6) * wob + Math.sin(th * 4 - t * 1.1) * wob * 0.6;
     const x = Math.cos(th) * r, y = Math.sin(th) * r;
     if (i) c.lineTo(x, y); else c.moveTo(x, y);
@@ -25,8 +25,13 @@ function coastPath(c, off, wob, t) {
   c.closePath();
 }
 
-/* ---------- Statisk markbild: sand, gräs, kulle, damm, brygga, torg ---------- */
-function buildGround(map, S) {
+/* Sjöfärger per bana (övre/nedre kant av bakgrunden) */
+const SEA_THEME = { ile: ['#46b9d8', '#2c8fbd'], place: ['#6dbbad', '#3f918a'] };
+
+function buildGround(map, S) { return map.kind === 'place' ? buildPlaceGround(map, S) : buildIslandGround(map, S); }
+
+/* ---------- Statisk markbild för ön: sand, gräs, kulle, damm, brygga, torg ---------- */
+function buildIslandGround(map, S) {
   const R = GROUND_R, N = Math.ceil(R * 2 * S);
   const cv = document.createElement('canvas'); cv.width = N; cv.height = N;
   const c = cv.getContext('2d');
@@ -165,6 +170,165 @@ function buildGround(map, S) {
   return cv;
 }
 
+
+/* ---------- Torgets markbild: kaj, kullersten, trikolor-kant, stenpodium, bassäng, pétanquebana ---------- */
+function buildPlaceGround(map, S) {
+  const R = GROUND_R, N = Math.ceil(R * 2 * S);
+  const cv = document.createElement('canvas'); cv.width = N; cv.height = N;
+  const c = cv.getContext('2d');
+  c.setTransform(S, 0, 0, S, R * S, R * S);
+  const rng = mulberry32(0x9A15E5), rnd = (a, b) => a + (b - a) * rng();
+  const cr = map.coastR, HR = CFG.hillR, pond = map.pond, ct = map.court;
+  const path = fn => {
+    c.beginPath();
+    for (let i = 0; i <= 240; i++) { const th = i / 240 * TAU, r = fn(th), x = Math.cos(th) * r, y = Math.sin(th) * r; if (i) c.lineTo(x, y); else c.moveTo(x, y); }
+    c.closePath();
+  };
+  c.lineJoin = 'round'; c.lineCap = 'round';
+  // Kajen (stenmur) med fogar
+  path(th => cr(th)); c.fillStyle = '#cfc2a3'; c.fill(); c.lineWidth = 6; c.strokeStyle = OUT; c.stroke();
+  c.strokeStyle = 'rgba(95,75,45,0.40)'; c.lineWidth = 2;
+  for (let th = 0; th < TAU; th += 0.028) { const r = cr(th); c.beginPath(); c.moveTo(Math.cos(th) * (r - 27), Math.sin(th) * (r - 27)); c.lineTo(Math.cos(th) * (r - 3), Math.sin(th) * (r - 3)); c.stroke(); }
+  path(th => cr(th) - 15); c.lineWidth = 2.4; c.stroke();
+  // Kullersten/plattor i förband
+  path(th => cr(th) - 28); c.fillStyle = '#efe3c6'; c.fill();
+  c.save(); path(th => cr(th) - 28); c.clip();
+  const TW = 96, TH = 60;
+  for (let ty = -18; ty < 18; ty++) {
+    const off = (ty & 1) ? TW / 2 : 0;
+    for (let tx = -13; tx < 13; tx++) {
+      const h = hash2(tx + 31, ty - 17);
+      c.fillStyle = h < 0.28 ? 'rgba(165,135,85,0.13)' : h < 0.56 ? 'rgba(255,255,255,0.22)' : h < 0.72 ? 'rgba(120,100,60,0.06)' : 'rgba(0,0,0,0)';
+      c.fillRect(tx * TW + off, ty * TH, TW, TH);
+    }
+  }
+  c.strokeStyle = 'rgba(130,108,70,0.30)'; c.lineWidth = 2.2;
+  for (let ty = -18; ty <= 18; ty++) {
+    c.beginPath(); c.moveTo(-1150, ty * TH); c.lineTo(1150, ty * TH); c.stroke();
+    const off = (ty & 1) ? TW / 2 : 0;
+    for (let tx = -13; tx <= 13; tx++) { const x = tx * TW + off; c.beginPath(); c.moveTo(x, ty * TH); c.lineTo(x, (ty + 1) * TH); c.stroke(); }
+  }
+  for (let i = 0; i < 1300; i++) { c.fillStyle = 'rgba(120,100,70,0.20)'; c.beginPath(); c.ellipse(rnd(-950, 950), rnd(-850, 850), rnd(2, 4.5), rnd(1.5, 3), rnd(0, 3), 0, TAU); c.fill(); }
+  c.restore();
+  path(th => cr(th) - 28); c.lineWidth = 4; c.strokeStyle = '#a28e68'; c.stroke();
+  // Trikolor-kant inlagd i stenen
+  const band = (off, w, col) => { path(th => cr(th) + off); c.lineWidth = w; c.strokeStyle = col; c.stroke(); };
+  band(-62, 37, OUT); band(-51.5, 11.5, '#2442a8'); band(-62, 11.5, '#ffffff'); band(-72.5, 11.5, '#d62839');
+  // Plantgropar med galler under träden
+  for (const ob of map.obstacles) {
+    if (ob.t !== 'tree') continue;
+    c.beginPath(); c.ellipse(ob.x, ob.y + 8, 33, 14, 0, 0, TAU); c.fillStyle = '#82735e'; c.fill(); c.lineWidth = 3; c.strokeStyle = OUT; c.stroke();
+    c.beginPath(); c.ellipse(ob.x, ob.y + 8, 22, 9, 0, 0, TAU); c.lineWidth = 2; c.strokeStyle = 'rgba(42,26,18,0.55)'; c.stroke();
+    for (let k = 0; k < 8; k++) { const a = k * TAU / 8; c.beginPath(); c.moveTo(ob.x + Math.cos(a) * 9, ob.y + 8 + Math.sin(a) * 4); c.lineTo(ob.x + Math.cos(a) * 31, ob.y + 8 + Math.sin(a) * 13); c.stroke(); }
+  }
+  // Pétanquebana (dekor)
+  {
+    const cx = ct.x, cy = ct.y, w = ct.w, h = ct.h;
+    rrect(c, cx - w / 2 - 12, cy - h / 2 - 12, w + 24, h + 24, 14); c.fillStyle = '#8a5a34'; c.fill(); c.lineWidth = 4; c.strokeStyle = OUT; c.stroke();
+    rrect(c, cx - w / 2, cy - h / 2, w, h, 8); c.fillStyle = '#dcc79c'; c.fill(); c.lineWidth = 2.5; c.strokeStyle = 'rgba(42,26,18,0.5)'; c.stroke();
+    for (let i = 0; i < 260; i++) { c.fillStyle = i & 1 ? 'rgba(120,90,50,0.30)' : 'rgba(255,255,255,0.35)'; c.beginPath(); c.arc(cx + rnd(-w / 2 + 6, w / 2 - 6), cy + rnd(-h / 2 + 6, h / 2 - 6), rnd(1, 2.4), 0, TAU); c.fill(); }
+    c.setLineDash([10, 8]); c.strokeStyle = 'rgba(255,255,255,0.8)'; c.lineWidth = 3; c.beginPath(); c.moveTo(cx - w / 2 + 40, cy - h / 2 + 8); c.lineTo(cx - w / 2 + 40, cy + h / 2 - 8); c.stroke(); c.setLineDash([]);
+    c.beginPath(); c.arc(cx - w / 2 + 40, cy, 15, 0, TAU); c.strokeStyle = 'rgba(255,255,255,0.8)'; c.lineWidth = 3; c.stroke();
+    const boule = (x, y, r, col) => {
+      c.fillStyle = 'rgba(30,20,10,0.25)'; c.beginPath(); c.ellipse(x + 2, y + r * 0.7, r, r * 0.5, 0, 0, TAU); c.fill();
+      const g = c.createRadialGradient(x - r * 0.3, y - r * 0.3, 1, x, y, r); g.addColorStop(0, '#f6f8fb'); g.addColorStop(1, col);
+      c.beginPath(); c.arc(x, y, r, 0, TAU); c.fillStyle = g; c.fill(); c.lineWidth = 2.2; c.strokeStyle = OUT; c.stroke();
+    };
+    for (const [bx, by, col] of [[60, -34, '#7c8794'], [88, 10, '#7c8794'], [30, 40, '#7c8794'], [104, -22, '#b0744a'], [72, 44, '#b0744a'], [118, 30, '#b0744a']]) boule(cx - w / 2 + bx + 30, cy + by * 0.8, 9, col);
+    c.beginPath(); c.arc(cx + 28, cy + 4, 4.5, 0, TAU); c.fillStyle = '#ffd23f'; c.fill(); c.lineWidth = 2; c.strokeStyle = OUT; c.stroke();
+  }
+  // Stenpodiet i mitten (Ostkullen): trappsteg med pilar utåt (osten rullar åt det hållet)
+  for (const [rr, col] of [[HR, '#d2c7ac'], [HR * 0.82, '#dcd2b8'], [HR * 0.64, '#e6dcc5'], [HR * 0.46, '#f0e8d4']]) {
+    c.beginPath(); c.arc(0, 0, rr, 0, TAU); c.fillStyle = col; c.fill(); c.lineWidth = 4; c.strokeStyle = '#8a7855'; c.stroke();
+    c.beginPath(); c.arc(0, 0, rr - 6, Math.PI * 1.05, Math.PI * 1.95); c.strokeStyle = 'rgba(255,255,255,0.55)'; c.lineWidth = 4; c.stroke();
+  }
+  c.strokeStyle = 'rgba(150,118,60,0.45)'; c.lineWidth = 7;
+  for (const [rr, off, n] of [[HR * 0.73, 0.0, 14], [HR * 0.55, 0.2, 10]]) {
+    for (let i = 0; i < n; i++) { c.save(); c.rotate(i * TAU / n + off); c.beginPath(); c.moveTo(rr, -13); c.lineTo(rr + 21, 0); c.lineTo(rr, 13); c.stroke(); c.restore(); }
+  }
+  c.beginPath();
+  for (let i = 0; i < 16; i++) { const a = i * TAU / 16 - Math.PI / 2, r = i & 1 ? 56 : 104; if (i) c.lineTo(Math.cos(a) * r, Math.sin(a) * r); else c.moveTo(Math.cos(a) * r, Math.sin(a) * r); }
+  c.closePath(); c.fillStyle = 'rgba(36,66,168,0.20)'; c.fill(); c.lineWidth = 3; c.strokeStyle = 'rgba(36,66,168,0.55)'; c.stroke();
+  c.beginPath(); c.arc(0, 0, 46, 0, TAU); c.fillStyle = '#d9cfb8'; c.fill(); c.lineWidth = 4; c.strokeStyle = OUT; c.stroke();
+  c.beginPath(); c.arc(0, 0, 33, 0, TAU); c.fillStyle = '#efe6d0'; c.fill(); c.lineWidth = 3; c.strokeStyle = 'rgba(42,26,18,0.5)'; c.stroke();
+  for (let i = 0; i < 8; i++) { const a = i * TAU / 8; c.fillStyle = 'rgba(160,140,100,0.5)'; c.beginPath(); c.arc(Math.cos(a) * 39.5, Math.sin(a) * 39.5, 2.4, 0, TAU); c.fill(); }
+  // Bassängen med leksaksbåtar
+  c.beginPath(); c.ellipse(pond.x, pond.y, pond.rx + 16, pond.ry + 14, 0, 0, TAU); c.fillStyle = '#cfc2a3'; c.fill(); c.lineWidth = 4; c.strokeStyle = OUT; c.stroke();
+  c.beginPath(); c.ellipse(pond.x, pond.y, pond.rx, pond.ry, 0, 0, TAU);
+  const pg = c.createRadialGradient(pond.x - 30, pond.y - 20, 10, pond.x, pond.y, pond.rx); pg.addColorStop(0, '#a6e4e0'); pg.addColorStop(1, '#4fb2b0');
+  c.fillStyle = pg; c.fill(); c.lineWidth = 3; c.strokeStyle = '#2d8a89'; c.stroke();
+  c.strokeStyle = 'rgba(255,255,255,0.6)'; c.lineWidth = 3;
+  for (const [ox, oy, r] of [[-62, -22, 24], [58, 26, 20], [10, 40, 14], [-20, -42, 16]]) { c.beginPath(); c.arc(pond.x + ox, pond.y + oy, r, 3.6, 4.9); c.stroke(); }
+  const boat = (x, y, hull, sail, flip) => {
+    c.save(); c.translate(x, y); c.scale(flip, 1);
+    c.fillStyle = 'rgba(20,70,70,0.25)'; c.beginPath(); c.ellipse(2, 8, 22, 6, 0, 0, TAU); c.fill();
+    c.beginPath(); c.moveTo(-22, 0); c.lineTo(22, 0); c.lineTo(15, 11); c.lineTo(-15, 11); c.closePath(); fillOut(c, hull, 2.5);
+    c.beginPath(); c.moveTo(0, 0); c.lineTo(0, -36); oStroke(c, 2.6);
+    c.beginPath(); c.moveTo(2, -34); c.lineTo(22, -4); c.lineTo(2, -4); c.closePath(); fillOut(c, sail, 2.4);
+    c.beginPath(); c.moveTo(-2, -30); c.lineTo(-16, -4); c.lineTo(-2, -4); c.closePath(); fillOut(c, '#fff', 2.4);
+    c.restore();
+  };
+  boat(pond.x - 38, pond.y + 12, '#d62839', '#2442a8', 1); boat(pond.x + 52, pond.y - 14, '#2442a8', '#d62839', -1);
+  // Livbojar på kajen
+  for (const th of [0.55, 1.25, 1.95, 2.7, 3.5, 4.2, 4.95, 5.7]) {
+    const r = cr(th) - 14, x = Math.cos(th) * r, y = Math.sin(th) * r;
+    c.beginPath(); c.arc(x, y, 9, 0, TAU); c.fillStyle = '#fff'; c.fill();
+    for (let k = 0; k < 4; k += 2) { c.beginPath(); c.moveTo(x, y); c.arc(x, y, 9, k * Math.PI / 2, (k + 1) * Math.PI / 2); c.closePath(); c.fillStyle = '#d62839'; c.fill(); }
+    c.beginPath(); c.arc(x, y, 9, 0, TAU); c.lineWidth = 2.4; c.strokeStyle = OUT; c.stroke();
+    c.beginPath(); c.arc(x, y, 3.4, 0, TAU); c.fillStyle = '#cfc2a3'; c.fill(); c.lineWidth = 1.6; c.stroke();
+  }
+  // Startplatser: kokard i tre färger
+  for (const sp of map.spawns) {
+    for (const [r, col] of [[46, '#d62839'], [34, '#ffffff'], [22, '#2442a8']]) { c.beginPath(); c.arc(sp.x, sp.y, r, 0, TAU); c.fillStyle = col; c.fill(); }
+    c.beginPath(); c.arc(sp.x, sp.y, 46, 0, TAU); c.lineWidth = 4; c.strokeStyle = OUT; c.stroke();
+  }
+  return cv;
+}
+
+/* ---------- Kartformer för minikarta och banväljare (bygger på världskoordinater) ---------- */
+function drawMapShapes(c, map, detail) {
+  const cr = map.coastR;
+  const blob = (off, col) => { c.beginPath(); for (let i = 0; i <= 120; i++) { const th = i / 120 * TAU, r = cr(th) + off; if (i) c.lineTo(Math.cos(th) * r, Math.sin(th) * r); else c.moveTo(Math.cos(th) * r, Math.sin(th) * r); } c.closePath(); c.fillStyle = col; c.fill(); };
+  if (map.kind === 'place') {
+    blob(0, '#cfc2a3'); blob(-28, '#efe3c6');
+    c.beginPath(); c.arc(0, 0, CFG.hillR, 0, TAU); c.fillStyle = '#d2c7ac'; c.fill();
+    c.beginPath(); c.arc(0, 0, 46, 0, TAU); c.fillStyle = '#f0e8d4'; c.fill();
+    c.beginPath(); c.ellipse(map.pond.x, map.pond.y, map.pond.rx, map.pond.ry, 0, 0, TAU); c.fillStyle = '#6cc3c0'; c.fill();
+    const ct = map.court; c.fillStyle = '#dcc79c'; c.fillRect(ct.x - ct.w / 2, ct.y - ct.h / 2, ct.w, ct.h);
+    for (const ob of map.obstacles) {
+      switch (ob.t) {
+        case 'stall': c.fillStyle = ob.v === 'pain' ? '#2442a8' : ob.v === 'fleurs' ? '#2f9e5b' : ob.v === 'fromage' ? '#f2b81f' : '#d62839'; c.fillRect(ob.x - 46, ob.y - 30, 92, 60); break;
+        case 'carousel': c.beginPath(); c.arc(ob.x, ob.y, 78, 0, TAU); c.fillStyle = '#d62839'; c.fill(); c.beginPath(); c.arc(ob.x, ob.y, 36, 0, TAU); c.fillStyle = '#fff'; c.fill(); break;
+        case 'tower': c.beginPath(); c.arc(ob.x, ob.y, 52, 0, TAU); c.fillStyle = '#6b5a4a'; c.fill(); break;
+        case 'tree': if (detail) { c.beginPath(); c.arc(ob.x, ob.y, 30, 0, TAU); c.fillStyle = '#58a843'; c.fill(); } break;
+        case 'cafe': if (detail) { c.beginPath(); c.arc(ob.x, ob.y, 24, 0, TAU); c.fillStyle = '#d62839'; c.fill(); } break;
+      }
+    }
+  } else {
+    blob(0, '#eed9a0'); blob(-48, '#7fc269');
+    c.beginPath(); c.arc(0, 0, CFG.hillR, 0, TAU); c.fillStyle = '#5ea84b'; c.fill();
+    c.beginPath(); c.arc(0, 0, 46, 0, TAU); c.fillStyle = '#e8dfc8'; c.fill();
+    c.beginPath(); c.ellipse(map.pond.x, map.pond.y, map.pond.rx, map.pond.ry, 0, 0, TAU); c.fillStyle = '#58b6dc'; c.fill();
+    c.fillStyle = '#b98a56'; c.fillRect(map.pier.x0, map.pier.y0, map.pier.x1 - map.pier.x0, map.pier.y1 - map.pier.y0);
+    c.beginPath(); c.arc(map.village.x, map.village.y, 190, 0, TAU); c.fillStyle = '#e5d6b2'; c.fill();
+    for (const ob of map.obstacles) {
+      if (ob.t === 'house') { c.fillStyle = '#c85a3a'; c.fillRect(ob.x - 52, ob.y - 38, 104, 76); }
+      else if (detail && ob.t === 'tree') { c.beginPath(); c.arc(ob.x, ob.y, 30, 0, TAU); c.fillStyle = '#3f8f3a'; c.fill(); }
+    }
+  }
+}
+/* Förhandsbild av en bana (för banväljaren i lobbyn) */
+function drawMapThumb(cv, kind) {
+  const map = makeMap(20261117, kind), c = cv.getContext('2d'), w = cv.width, h = cv.height;
+  c.setTransform(1, 0, 0, 1, 0, 0); c.clearRect(0, 0, w, h);
+  const tc = SEA_THEME[kind] || SEA_THEME.ile, g = c.createLinearGradient(0, 0, 0, h);
+  g.addColorStop(0, tc[0]); g.addColorStop(1, tc[1]); c.fillStyle = g; c.fillRect(0, 0, w, h);
+  const s = Math.min(w, h) / 2 / (kind === 'place' ? 900 : 1010);
+  c.translate(w / 2, h / 2); c.scale(s, s);
+  drawMapShapes(c, map, true);
+  c.setTransform(1, 0, 0, 1, 0, 0);
+}
+
 /* ---------- Små canvas-hjälpare för UI (porträtt, vapenikoner, ost) ---------- */
 function drawPortrait(cv, skin, o) {
   o = o || {};
@@ -173,6 +337,23 @@ function drawPortrait(cv, skin, o) {
   const sc = h / (o.weapon ? 124 : 112);
   c.setTransform(sc, 0, 0, sc, w / (o.weapon ? 2.6 : 2), h - 9 * sc);
   drawCharacter(c, { x: 0, y: 0, skin: skin, a: o.a === undefined ? 0.35 : o.a, vx: 0, vy: 0, phase: 0, t: o.t || 0, id: skin, weapon: o.weapon || null, carry: !!o.carry, ko: !!o.ko });
+  c.setTransform(1, 0, 0, 1, 0, 0);
+}
+/* Krona till vinnaren (prispallen och resultattabellen) */
+function drawCrown(cv) {
+  const c = cv.getContext('2d'), w = cv.width, h = cv.height;
+  c.setTransform(1, 0, 0, 1, 0, 0); c.clearRect(0, 0, w, h);
+  const sc = Math.min(w / 112, h / 74);
+  c.setTransform(sc, 0, 0, sc, w / 2, h - 6 * sc);
+  c.lineJoin = 'round'; c.lineCap = 'round';
+  c.beginPath(); c.moveTo(-42, 0); c.lineTo(-47, -48); c.lineTo(-24, -30); c.lineTo(0, -60); c.lineTo(24, -30); c.lineTo(47, -48); c.lineTo(42, 0); c.closePath();
+  const g = c.createLinearGradient(0, -60, 0, 0); g.addColorStop(0, '#fff0a0'); g.addColorStop(0.55, '#ffd23f'); g.addColorStop(1, '#e6a800');
+  c.fillStyle = g; c.fill(); c.lineWidth = 5.5; c.strokeStyle = OUT; c.stroke();
+  c.beginPath(); c.moveTo(-26, -10); c.lineTo(-22, -30); c.moveTo(26, -10); c.lineTo(22, -30); c.lineWidth = 2.5; c.strokeStyle = 'rgba(160,105,0,0.55)'; c.stroke();
+  rrect(c, -42, -15, 84, 17, 5); c.fillStyle = '#d62839'; c.fill(); c.lineWidth = 5; c.strokeStyle = OUT; c.stroke();
+  for (const [x, col] of [[-26, '#ffffff'], [-9, '#2442a8'], [9, '#ffffff'], [26, '#2442a8']]) { c.beginPath(); c.arc(x, -6.5, 4.6, 0, TAU); c.fillStyle = col; c.fill(); c.lineWidth = 2; c.strokeStyle = OUT; c.stroke(); }
+  for (const [x, y, r] of [[-47, -48, 6.5], [0, -60, 7.5], [47, -48, 6.5]]) { c.beginPath(); c.arc(x, y, r, 0, TAU); c.fillStyle = '#fff'; c.fill(); c.lineWidth = 3.5; c.strokeStyle = OUT; c.stroke(); }
+  c.beginPath(); c.moveTo(-36, -36); c.lineTo(-30, -25); c.strokeStyle = 'rgba(255,255,255,0.8)'; c.lineWidth = 3; c.stroke();
   c.setTransform(1, 0, 0, 1, 0, 0);
 }
 const ICON_BOX = {
@@ -238,9 +419,9 @@ class Renderer {
     this.parts.length = 0; this.texts.length = 0;
     this.pst.clear(); this.born.clear(); this.dent.clear();
     this.lastView = null; this.snap = true; this.shake = 0; this.mm = null;
-    if (!this.ground) {
+    if (!this.ground || this.groundKind !== map.kind) {
       const S = this.dpr >= 1.5 ? 1.5 : 1.15;
-      this.groundS = S; this.ground = buildGround(map, S);
+      this.groundS = S; this.ground = null; this.ground = buildGround(map, S); this.groundKind = map.kind; this.seaGrad = null;
     }
     if (!this.sprites) this.buildSprites();
     this.flags = map.spawns.filter((_, i) => i % 2 === 0).map(sp => ({ x: sp.x + Math.cos(sp.a) * 68 - Math.sin(sp.a) * 22, y: sp.y + Math.sin(sp.a) * 68 + Math.cos(sp.a) * 22 }));
@@ -257,6 +438,10 @@ class Renderer {
     sp.tree = mk(120, 140, 60, 110, (c, x, y) => drawTree(c, { x, y }, 0));
     sp.barrel = mk(70, 70, 35, 50, (c, x, y) => drawBarrel(c, { x, y }));
     sp.cafe = mk(100, 130, 50, 100, (c, x, y) => drawCafeTable(c, { x, y }));
+    for (const v of Object.keys(STALL_STYLES)) sp['stall:' + v] = mk(150, 160, 75, 120, (c, x, y) => drawStall(c, { x, y, v }));
+    sp.column = mk(80, 130, 40, 100, (c, x, y) => drawColumn(c, { x, y }));
+    sp.carousel = mk(220, 250, 110, 190, (c, x, y) => drawCarousel(c, { x, y }, 0));
+    sp.kiosk = mk(110, 100, 55, 72, (c, x, y) => drawKiosk(c, { x, y }));
     this.sprites = sp;
   }
 
@@ -384,8 +569,9 @@ class Renderer {
           const st = this.pst.get(vid); if (st) st.koDir = kx >= 0 ? 1 : -1;
           this.spawn({ kind: 'ring', x, y, size: 16, grow: 5, col: 'rgba(255,255,255,0.95)', life: 0.35, lw: 7 });
           this.burst(x, y, 6, i => { const a = i / 6 * TAU + Math.random() * 0.6; return { kind: 'star', x, y, z: 45, vx: Math.cos(a) * 230, vy: Math.sin(a) * 230, vz: 120, g: 400, size: 7, col: i & 1 ? '#ffe066' : '#fff', life: 0.55, vr: 8, drag: 1.2 }; });
-          const col = { baguette: '#e3a95c', patate: '#a0713a', poireau: '#6fbe55', coq: '#ffd23f', petanque: '#b9c2d0', poele: '#c8cdd6' }[cause];
-          if (col) this.burst(x, y, 7, () => ({ kind: cause === 'coq' ? 'feather' : cause === 'poireau' ? 'leaf' : 'crumb', x, y, z: 40, vx: kx * 120 + (Math.random() - 0.5) * 260, vy: ky * 120 + (Math.random() - 0.5) * 260, vz: 140, g: 420, size: 4.5, col, life: 0.8, vr: 9 }));
+          const col = { baguette: '#e3a95c', patate: '#a0713a', poireau: '#6fbe55', coq: '#ffd23f', petanque: '#b9c2d0', poele: '#c8cdd6', souffleur: '#c8e69a' }[cause];
+          const wind = cause === 'souffleur';
+          if (col) this.burst(x, y, wind ? 16 : 7, () => ({ kind: cause === 'coq' ? 'feather' : cause === 'poireau' || wind ? 'leaf' : 'crumb', x, y, z: 40, vx: kx * (wind ? 520 : 120) + (Math.random() - 0.5) * (wind ? 200 : 260), vy: ky * (wind ? 520 : 120) + (Math.random() - 0.5) * (wind ? 200 : 260), vz: 140, g: 420, size: 4.5, col, life: 0.8, vr: 9 }));
           const ono = (WEAPONS[cause] && WEAPONS[cause].ono) || CAUSE_ONO[cause];
           if (ono) this.text(x, y - 72, ono, (WEAPONS[cause] && WEAPONS[cause].col) || '#fff', 28);
           this.addShake(x, y, vid === this.me || by === this.me ? 9 : 4);
@@ -438,8 +624,8 @@ class Renderer {
         case 'stink': this.burst(e[1], e[2], 10, () => { const a = Math.random() * TAU, s = 40 + Math.random() * 120; return { kind: 'smoke', x: e[1], y: e[2], z: 20, vx: Math.cos(a) * s, vy: Math.sin(a) * s, vz: 30, size: 30, grow: 1.5, col: 'rgba(150,200,50,0.6)', life: 1.1 }; }); this.text(e[1], e[2] - 70, 'PUANT!', '#b6d44e', 28); break;
         case 'land': this.burst(e[2], e[3], 6, () => ({ kind: 'smoke', x: e[2], y: e[3], z: 2, vx: (Math.random() - 0.5) * 120, vy: (Math.random() - 0.5) * 120, size: 12, grow: 1.4, col: 'rgba(240,232,210,0.7)', life: 0.4 })); break;
         case 'crash': {
-          const x = e[2], y = e[3], type = e[4], big = type === 'house' || type === 'tower', n = big ? 22 : 12;
-          const cols = { house: ['#c85a3a', '#e8d6b0', '#a8473a'], tower: ['#6b5a4a', '#8a7762', '#4a3e34'], tree: ['#4b9a38', '#64b84c', '#7a4c2a'], barrel: ['#a8693a', '#c58a52', '#4a4f57'], cafe: ['#d62839', '#fff', '#3a3a44'] }[type] || ['#aaa'];
+          const x = e[2], y = e[3], type = e[4], big = type === 'house' || type === 'tower' || type === 'carousel', n = big ? 22 : 12;
+          const cols = { house: ['#c85a3a', '#e8d6b0', '#a8473a'], tower: ['#6b5a4a', '#8a7762', '#4a3e34'], tree: ['#4b9a38', '#64b84c', '#7a4c2a'], barrel: ['#a8693a', '#c58a52', '#4a4f57'], cafe: ['#d62839', '#fff', '#3a3a44'], stall: ['#d62839', '#fff', '#b98a56', '#f2b81f'], column: ['#2f8f5b', '#fdf1c4', '#d62839'], carousel: ['#d62839', '#fff', '#f2c230', '#2442a8'], kiosk: ['#2d6a4f', '#8a5a34', '#fff4d6'] }[type] || ['#aaa'];
           this.burst(x, y, n, i => { const a = Math.random() * TAU, s = 80 + Math.random() * (big ? 320 : 220); return { kind: type === 'tree' ? 'leaf' : 'crumb', x, y, z: 30, vx: Math.cos(a) * s, vy: Math.sin(a) * s, vz: 140 + Math.random() * 220, g: 560, size: big ? 7 : 5, col: cols[i % cols.length], life: 1.0 + Math.random() * 0.5, vr: 8, bounce: 0.35 }; });
           this.burst(x, y, big ? 8 : 4, () => ({ kind: 'smoke', x: x + (Math.random() - 0.5) * 60, y: y + (Math.random() - 0.5) * 40, z: 20, vz: 40, size: big ? 44 : 26, grow: 1.4, col: 'rgba(190,175,150,0.6)', life: 1.0 }));
           this.text(x, y - (big ? 100 : 60), type === 'tree' ? 'CRAC!' : type === 'barrel' ? 'BANG!' : 'CRASH!', '#e8d9a8', big ? 36 : 26);
@@ -488,7 +674,7 @@ class Renderer {
 
   /* ---------- Hav ---------- */
   drawSea(c) {
-    const t = this.t, cam = this.cam, z = cam.z;
+    const t = this.t, cam = this.cam, z = cam.z, map = this.map, cr = map.coastR;
     const hw = this.W / 2 / z + 60, hh = this.H / 2 / z + 60, step = 150;
     const x0 = Math.floor((cam.x - hw) / step), x1 = Math.floor((cam.x + hw) / step), y0 = Math.floor((cam.y - hh) / step), y1 = Math.floor((cam.y + hh) / step);
     c.lineCap = 'round';
@@ -496,16 +682,26 @@ class Renderer {
       const h1 = hash2(cx, cy), h2 = hash2(cy + 77, cx - 13);
       if (h1 < 0.3) continue;
       const x = cx * step + h1 * step, y = cy * step + h2 * step;
-      if (Math.hypot(x, y) < coastR(Math.atan2(y, x)) + 40) continue;
+      if (Math.hypot(x, y) < cr(Math.atan2(y, x)) + 40) continue;
       const a = 0.12 + 0.28 * (0.5 + 0.5 * Math.sin(t * 1.1 + h2 * 6.28));
       c.strokeStyle = 'rgba(255,255,255,' + a.toFixed(3) + ')'; c.lineWidth = 3;
       c.beginPath(); c.arc(x, y, 16 + h1 * 16, Math.PI * 1.1, Math.PI * 1.9); c.stroke();
       c.beginPath(); c.arc(x + 20, y + 14, 10 + h2 * 8, Math.PI * 1.15, Math.PI * 1.85); c.stroke();
     }
-    coastPath(c, 130, 7, t); c.fillStyle = 'rgba(112,208,226,0.32)'; c.fill();
-    coastPath(c, 74, 6, t + 1); c.fillStyle = 'rgba(138,224,236,0.45)'; c.fill();
-    coastPath(c, 32 + Math.sin(t * 1.2) * 5, 5, t + 2); c.fillStyle = 'rgba(190,243,246,0.78)'; c.fill();
-    coastPath(c, 8 + Math.sin(t * 1.7) * 3.5, 3, t + 3); c.fillStyle = 'rgba(255,255,255,0.96)'; c.fill();
+    if (map.kind === 'place') {   // Seine: mörk skugga under kajmuren, lugna ljusa strömdrag
+      coastPath(c, 90, 5, t, cr); c.fillStyle = 'rgba(20,70,66,0.20)'; c.fill();
+      coastPath(c, 50, 4, t + 1, cr); c.fillStyle = 'rgba(20,70,66,0.20)'; c.fill();
+      coastPath(c, 18, 2, t + 2, cr); c.fillStyle = 'rgba(12,50,48,0.28)'; c.fill();
+      c.lineWidth = 3;
+      coastPath(c, 132 + Math.sin(t * 0.8) * 6, 6, t * 0.6, cr); c.strokeStyle = 'rgba(255,255,255,0.22)'; c.stroke();
+      coastPath(c, 74 + Math.sin(t * 1.1) * 4, 5, t * 0.6 + 2, cr); c.strokeStyle = 'rgba(255,255,255,0.32)'; c.stroke();
+      coastPath(c, 30 + Math.sin(t * 1.3) * 3, 3, t * 0.7 + 4, cr); c.strokeStyle = 'rgba(255,255,255,0.45)'; c.stroke();
+    } else {
+      coastPath(c, 130, 7, t); c.fillStyle = 'rgba(112,208,226,0.32)'; c.fill();
+      coastPath(c, 74, 6, t + 1); c.fillStyle = 'rgba(138,224,236,0.45)'; c.fill();
+      coastPath(c, 32 + Math.sin(t * 1.2) * 5, 5, t + 2); c.fillStyle = 'rgba(190,243,246,0.78)'; c.fill();
+      coastPath(c, 8 + Math.sin(t * 1.7) * 3.5, 3, t + 3); c.fillStyle = 'rgba(255,255,255,0.96)'; c.fill();
+    }
   }
 
   /* ---------- Hela bilden ---------- */
@@ -524,7 +720,7 @@ class Renderer {
     const shx = (Math.random() - 0.5) * 2 * this.shake, shy = (Math.random() - 0.5) * 2 * this.shake;
 
     c.setTransform(dpr, 0, 0, dpr, 0, 0);
-    if (!this.seaGrad) { const g = c.createLinearGradient(0, 0, 0, H); g.addColorStop(0, '#46b9d8'); g.addColorStop(1, '#2c8fbd'); this.seaGrad = g; }
+    if (!this.seaGrad) { const tc = SEA_THEME[map ? map.kind : 'ile'] || SEA_THEME.ile, g = c.createLinearGradient(0, 0, 0, H); g.addColorStop(0, tc[0]); g.addColorStop(1, tc[1]); this.seaGrad = g; }
     c.fillStyle = this.seaGrad; c.fillRect(0, 0, W, H);
     if (!map || !this.ground) return;
 
@@ -606,10 +802,16 @@ class Renderer {
       const W = WEAPONS[meta.weapon], a = o.aim.a, ad = o.aim.ad;
       if (W.kind === 'rocket' || W.kind === 'can') {
         const d = clamp(ad, W.rangeMin, W.rangeMax), tx = me.x + Math.cos(a) * d, ty = me.y + Math.sin(a) * d, rr = W.kind === 'rocket' ? W.boomR : W.cloudR;
-        c.beginPath(); c.moveTo(me.x + Math.cos(a) * 40, me.y + Math.sin(a) * 40); c.lineTo(tx, ty); c.setLineDash([4, 10]); c.strokeStyle = 'rgba(255,255,255,0.55)'; c.lineWidth = 3; c.stroke(); c.setLineDash([]);
+        // målmarkeringen ritas mörk med tunn ljus kant, så den syns på både gräs, sten och vatten
         c.beginPath(); c.arc(tx, ty, rr, 0, TAU); c.fillStyle = W.kind === 'rocket' ? 'rgba(255,90,60,0.12)' : 'rgba(160,210,60,0.14)'; c.fill();
-        c.setLineDash([12, 9]); c.lineDashOffset = -t * 20; c.strokeStyle = W.kind === 'rocket' ? 'rgba(255,255,255,0.7)' : 'rgba(255,255,255,0.65)'; c.lineWidth = 3; c.stroke(); c.setLineDash([]); c.lineDashOffset = 0;
-        c.beginPath(); c.arc(tx, ty, 5, 0, TAU); c.fillStyle = '#fff'; c.fill();
+        for (const [col, w] of [['rgba(255,255,255,0.8)', 6], ['rgba(0,0,0,0.85)', 3]]) {
+          c.strokeStyle = col; c.lineWidth = w;
+          c.beginPath(); c.moveTo(me.x + Math.cos(a) * 40, me.y + Math.sin(a) * 40); c.lineTo(tx, ty); c.setLineDash([4, 10]); c.stroke();
+          c.beginPath(); c.arc(tx, ty, rr, 0, TAU); c.setLineDash([12, 9]); c.lineDashOffset = -t * 20; c.stroke();
+          c.setLineDash([]); c.lineDashOffset = 0;
+        }
+        c.beginPath(); c.arc(tx, ty, 6.5, 0, TAU); c.fillStyle = 'rgba(255,255,255,0.85)'; c.fill();
+        c.beginPath(); c.arc(tx, ty, 4, 0, TAU); c.fillStyle = '#000'; c.fill();
       } else if (W.kind === 'pad') {
         const gx = me.x + Math.cos(a) * 80, gy = me.y + Math.sin(a) * 80;
         c.globalAlpha = 0.4; drawArea(c, { k: 'pad', x: gx, y: gy, r: W.padR, f: 1, a }, t); c.globalAlpha = 1;
@@ -650,7 +852,7 @@ class Renderer {
   }
 
   drawOb(c, ob) {
-    const key = ob.t === 'house' ? 'house:' + ob.v : ob.t === 'cafe' ? 'cafe' : ob.t;
+    const key = ob.t === 'house' ? 'house:' + ob.v : ob.t === 'stall' ? 'stall:' + ob.v : ob.t;
     const sp = this.sprites[key]; if (!sp) return;
     const t = this.t, dt = this.dent.get(ob.id);
     let dx = 0, sh = 0;
@@ -698,8 +900,17 @@ class Renderer {
     const d = {
       x: p.x, y: p.y, skin: meta.skin, a: p.a, vx: p.vx, vy: p.vy, phase: s ? s.phase : 0, t, id: p.id,
       carry: p.carry, guard: p.guard, weapon: meta.weapon, sw: p.sw, daze: p.daze, stink: p.stink, blow: p.blow, dash: p.dash, over: p.over,
-      ko: false, lift: 0, alpha: 1, spin: 0
+      ko: false, lift: 0, alpha: 1, spin: 0, gale: 0, galeA: null
     };
+    if (p.gale > 0.03 && p.st === 0) {   // vindmätare: luta dig mot blåsaren
+      const Wb = WEAPONS.souffleur; let bd = 1e9;
+      for (const q of view.players) {
+        if (!q.blow || q.id === p.id || q.st !== 0) continue;
+        const dd = Math.hypot(q.x - p.x, q.y - p.y);
+        if (dd < bd && dd < Wb.range + 80) { bd = dd; d.galeA = q.a; }
+      }
+      d.gale = p.gale;
+    }
     const phase = view.phase;
     if (phase === 'reveal' || phase === 'count') { d.vx = d.vy = 0; }
     let sink = 0;
@@ -772,11 +983,13 @@ class Renderer {
 
   drawReticle(c) {
     const x = this.mouse.x, y = this.mouse.y;
+    // svart sikte med tunn ljus kant (syns på gräs, kullersten och mörkt vatten)
     c.save(); c.translate(x, y); c.lineCap = 'round';
-    for (const [col, w] of [['rgba(30,18,12,0.85)', 5], ['#fff', 2.4]]) {
-      c.strokeStyle = col; c.lineWidth = w;
-      c.beginPath(); c.arc(0, 0, 9, 0, TAU); c.stroke();
-      c.beginPath(); for (const a of [0, 1, 2, 3]) { const cx = Math.cos(a * Math.PI / 2), cy = Math.sin(a * Math.PI / 2); c.moveTo(cx * 14, cy * 14); c.lineTo(cx * 20, cy * 20); } c.stroke();
+    for (const [col, w, r] of [['rgba(255,255,255,0.9)', 6.4, 3.6], ['#000', 3.2, 2]]) {
+      c.strokeStyle = col; c.fillStyle = col; c.lineWidth = w;
+      c.beginPath(); c.arc(0, 0, 10, 0, TAU); c.stroke();
+      c.beginPath(); for (const a of [0, 1, 2, 3]) { const cx = Math.cos(a * Math.PI / 2), cy = Math.sin(a * Math.PI / 2); c.moveTo(cx * 15, cy * 15); c.lineTo(cx * 22, cy * 22); } c.stroke();
+      c.beginPath(); c.arc(0, 0, r, 0, TAU); c.fill();
     }
     c.restore();
   }
@@ -802,16 +1015,9 @@ class Renderer {
     const dpr = this.dpr, cv = document.createElement('canvas'); cv.width = Math.round(size * dpr); cv.height = Math.round(size * dpr);
     const c = cv.getContext('2d'), s = (size / 2 - 9) / 1080, map = this.map;
     c.setTransform(dpr, 0, 0, dpr, 0, 0);
-    c.beginPath(); c.arc(size / 2, size / 2, size / 2 - 1.5, 0, TAU); c.fillStyle = 'rgba(30,110,150,0.78)'; c.fill(); c.lineWidth = 3; c.strokeStyle = '#f6f1e4'; c.stroke();
+    c.beginPath(); c.arc(size / 2, size / 2, size / 2 - 1.5, 0, TAU); c.fillStyle = map.kind === 'place' ? 'rgba(40,125,115,0.82)' : 'rgba(30,110,150,0.78)'; c.fill(); c.lineWidth = 3; c.strokeStyle = '#f6f1e4'; c.stroke();
     c.translate(size / 2, size / 2); c.scale(s, s);
-    const blob = (off, col) => { c.beginPath(); for (let i = 0; i <= 120; i++) { const th = i / 120 * TAU, r = coastR(th) + off; if (i) c.lineTo(Math.cos(th) * r, Math.sin(th) * r); else c.moveTo(Math.cos(th) * r, Math.sin(th) * r); } c.closePath(); c.fillStyle = col; c.fill(); };
-    blob(0, '#eed9a0'); blob(-48, '#7fc269');
-    c.beginPath(); c.arc(0, 0, CFG.hillR, 0, TAU); c.fillStyle = '#5ea84b'; c.fill();
-    c.beginPath(); c.arc(0, 0, 46, 0, TAU); c.fillStyle = '#e8dfc8'; c.fill();
-    c.beginPath(); c.ellipse(map.pond.x, map.pond.y, map.pond.rx, map.pond.ry, 0, 0, TAU); c.fillStyle = '#58b6dc'; c.fill();
-    c.fillStyle = '#b98a56'; c.fillRect(map.pier.x0, map.pier.y0, map.pier.x1 - map.pier.x0, map.pier.y1 - map.pier.y0);
-    c.beginPath(); c.arc(map.village.x, map.village.y, 190, 0, TAU); c.fillStyle = '#e5d6b2'; c.fill();
-    for (const ob of map.obstacles) if (ob.t === 'house') { c.fillStyle = '#c85a3a'; c.fillRect(ob.x - 52, ob.y - 38, 104, 76); }
+    drawMapShapes(c, map, false);
     return { cv, size, s };
   }
 

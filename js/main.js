@@ -91,7 +91,7 @@ const App = {
   boot() {
     const cv = $('game');
     this.renderer = new Renderer(cv);
-    this.renderer.setMatch(makeMap(20261117), [], -1);
+    this.renderer.setMatch(this.bgMap('ile'), [], -1);
     Input.init(cv);
     window.addEventListener('resize', () => this.renderer.resize());
     window.addEventListener('pointerdown', () => { SFX.unlock(); this.musicOn(); }, { once: false });
@@ -125,12 +125,24 @@ const App = {
     if (this.state === 'title') UI.setInvite(this.joinCode);
   },
 
+  /* Lobbybakgrunden visar den valda banan. Banorna byggs bara en gång per sort. */
+  bgMap(kind) {
+    const k = MAPS[kind] ? kind : 'ile';
+    this.bgMaps = this.bgMaps || {};
+    return this.bgMaps[k] || (this.bgMaps[k] = makeMap(20261117, k));
+  },
+  lobbyBg(st) {
+    if (this.state !== 'lobby' || !st || !st.settings) return;
+    const k = MAPS[st.settings.map] ? st.settings.map : 'ile';
+    if (!this.renderer.map || this.renderer.map.kind !== k) this.renderer.setMatch(this.bgMap(k), [], -1);
+  },
+
   musicOn() { if (!this.musicStarted) { this.musicStarted = true; SFX.music(true); } SFX.musicLevel(this.state === 'match' ? 0.5 : 0.85); },
 
   /* ----- Sessioner ----- */
   attach(s) {
     s.cb = {
-      lobby: st => UI.setLobby(st),
+      lobby: st => { UI.setLobby(st); this.lobbyBg(st); },
       start: info => this.startMatch(info),
       events: evs => this.onEvents(evs),
       end: res => this.onEnd(res),
@@ -171,7 +183,7 @@ const App = {
     this.dispose();
     this.state = 'title'; this.paused = false; this.lastView = null; clearTimeout(this.resTimer);
     Input.releaseAll();
-    this.renderer.setMatch(makeMap(20261117), [], -1);
+    this.renderer.setMatch(this.bgMap('ile'), [], -1);
     if (location.hash) { try { history.replaceState(null, '', location.pathname + location.search); } catch (e) { /* ok */ } }
     this.joinCode = null; UI.setInvite(null);
     UI.screen('title'); UI.titleMsg(msg || '');
@@ -184,8 +196,9 @@ const App = {
     Input.releaseAll();
     UI.sel = null;
     UI.screen('lobby');
-    UI.setLobby(s.lobbyState());
-    this.renderer.setMatch(makeMap(20261117), [], -1);
+    const st = s.lobbyState();
+    UI.setLobby(st);
+    this.renderer.setMatch(this.bgMap(st.settings && st.settings.map), [], -1);
     this.musicOn();
   },
 

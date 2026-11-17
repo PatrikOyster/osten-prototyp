@@ -73,6 +73,10 @@ const SFX = (() => {
     crash() { noise({ type: 'bandpass', f: 800, f2: 200, q: 0.6, dur: 0.45, vol: 0.32 }); tone({ type: 'sine', f: 90, f2: 40, dur: 0.3, vol: 0.2 }); },
     whistle() { tone({ type: 'sine', f: 2400, f2: 2000, dur: 0.5, vol: 0.12 }); },
     win() { [0, 4, 7, 12, 7, 12, 16].forEach((s, i) => tone({ type: 'square', f: mtof(60 + s), dur: 0.18, vol: 0.1, delay: i * 0.12 })); },
+    fanfare() {
+      [[0, 0], [4, 0.13], [7, 0.26], [12, 0.42]].forEach(([n, d]) => { tone({ type: 'sawtooth', f: mtof(64 + n), dur: d === 0.42 ? 0.9 : 0.2, vol: 0.09, delay: d, attack: 0.02 }); tone({ type: 'square', f: mtof(76 + n), dur: d === 0.42 ? 0.9 : 0.2, vol: 0.045, delay: d, attack: 0.02 }); });
+      noise({ type: 'highpass', f: 5000, dur: 1.1, vol: 0.12, delay: 0.42 }); tone({ type: 'sine', f: 90, f2: 45, dur: 0.4, vol: 0.3, delay: 0.42 });
+    },
     alert() { tone({ type: 'square', f: 700, dur: 0.1, vol: 0.12 }); tone({ type: 'square', f: 700, dur: 0.1, vol: 0.12, delay: 0.16 }); }
   };
 
