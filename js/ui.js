@@ -38,6 +38,11 @@ const UI = {
     this.buildWeapons();
     this.buildMaps();
     $('btn-lock').onclick = () => { if (this.sel) h.pick(this.sel); };
+    $('btn-unlock').onclick = () => {   // lås upp och välj om (går bara före matchstart – värden avgör)
+      const st = this.lobby; if (!st || !st.locked || st.spec) return;
+      if (st.myWeapon) this.sel = st.myWeapon;   // det tidigare valet är förvalt
+      h.unpick(); SFX.play('click');
+    };
     $('btn-start').onclick = () => h.start();
     $('btn-leave').onclick = () => h.leave();
     $('btn-leave2').onclick = () => h.leave();
@@ -219,7 +224,8 @@ const UI = {
     bl.classList.toggle('hidden', locked);
     bl.disabled = !this.sel;
     bl.textContent = this.sel ? 'Lås in: ' + WEAPONS[this.sel].name : 'Välj ett vapen';
-    $('lock-msg').textContent = locked ? 'Låst! Du startar med ' + WEAPONS[st.myWeapon].name.toLowerCase() + ' varje gång du blir utslagen.' : '';
+    $('btn-unlock').classList.toggle('hidden', !locked || !!st.spec);
+    $('lock-msg').textContent = locked ? 'Låst! Du startar med ' + WEAPONS[st.myWeapon].name.toLowerCase() + ' varje gång du blir utslagen. Ångrar du dig kan du byta fram till matchstart.' : '';
   },
   controlsFor(W) {
     switch (W.kind) {
@@ -236,7 +242,7 @@ const UI = {
   hudStart(meta, me, spec) {
     const h = this.hud = {
       meta: new Map(meta.map(p => [p.id, p])), order: meta.map(p => p.id), me, spec, rows: new Map(), lastBoard: 0, count: -1, phase: null,
-      ko: null, feed: [], startAt: performance.now(), wcd: -1, tk: -1, badge: '', wdis: false, timerTxt: '', net: '', bannerT: 0, goT: 0
+      ko: null, feed: [], startAt: performance.now(), wcd: -1, tk: -1, badge: '', wdis: false, tdis: false, galeTip: '', timerTxt: '', net: '', bannerT: 0, goT: 0
     };
     const board = $('board'); board.innerHTML = '';
     for (const p of meta) {
@@ -306,7 +312,10 @@ const UI = {
           if (e[1] === h.me) this.banner('Du har osten! Spring!', 1800);
           break;
         }
-        case 'cheeseReset': this.feedLine(['Osten flöt tillbaka till kullen'], 'cheese'); break;
+        case 'cheeseReset': {
+          const kind = typeof App !== 'undefined' && App.renderer && App.renderer.map ? App.renderer.map.kind : '';
+          this.feedLine([kind === 'canal' ? 'Osten flöt tillbaka till mitten-ön' : 'Osten flöt tillbaka till kullen'], 'cheese'); break;
+        }
         case 'parisduva': this.feedLine(['Parisduvan jagar ostbäraren!']); break;
         case 'left': { const m = h.meta.get(e[1]); if (m) this.feedLine([{ n: m.name }, ' lämnade – en bot tar över']); break; }
       }
@@ -356,10 +365,12 @@ const UI = {
     if (me && !h.spec) {
       const meta = h.meta.get(me.id), W = WEAPONS[meta.weapon];
       const wdis = me.carry || me.st !== 0;
+      const tdis = (me.carry && !CFG.carrierTackle) || me.st !== 0;   // bäraren kan varken slåss eller tackla
       const wcd = Math.round(clamp(wcdFor(me, W), 0, 1) * 100), tk = Math.round(clamp(me.tk, 0, 1) * 100);
-      if (wcd !== h.wcd) { h.wcd = wcd; $('ring-weapon').style.setProperty('--cd', wcd); $('ring-weapon').classList.toggle('ready', wcd === 0 && !wdis); }
-      if (tk !== h.tk) { h.tk = tk; $('ring-tackle').style.setProperty('--cd', tk); $('ring-tackle').classList.toggle('ready', tk === 0); }
+      if (wcd !== h.wcd || wdis !== h.wdis) { h.wcd = wcd; $('ring-weapon').style.setProperty('--cd', wcd); $('ring-weapon').classList.toggle('ready', wcd === 0 && !wdis); }
+      if (tk !== h.tk || tdis !== h.tdis) { h.tk = tk; $('ring-tackle').style.setProperty('--cd', tk); $('ring-tackle').classList.toggle('ready', tk === 0 && !tdis); }
       if (wdis !== h.wdis) { h.wdis = wdis; $('ring-weapon').style.opacity = wdis ? 0.45 : 1; $('hud-wkey').textContent = me.carry ? 'Bär osten' : W.kind === 'pan' || W.kind === 'blow' ? 'Håll klick' : 'Klick / E'; }
+      if (tdis !== h.tdis) { h.tdis = tdis; $('ring-tackle').style.opacity = tdis ? 0.45 : 1; $('hud-tkey').textContent = me.carry && tdis ? 'Bär osten' : 'Mellanslag'; }
       $('ring-weapon').classList.toggle('over', !!me.over);
       let badge = '';
       if (W.ammo) badge = String(Math.round(me.m)); else if (W.kind === 'mine' || W.kind === 'pad') badge = Math.round(me.m) + '/' + W.max;
@@ -367,6 +378,8 @@ const UI = {
       // vindmätare (lövblåsaren): varning när man håller på att blåsas bort
       const gv = Math.round(clamp(me.gale || 0, 0, 1) * 100), gon = me.st === 0 && gv >= 12;
       if (gon !== h.galeOn) { h.galeOn = gon; $('gale-box').classList.toggle('hidden', !gon); }
+      const gtip = me.carry && !CFG.carrierTackle ? 'Spring åt sidan – med osten kan du inte tackla dig loss' : 'Spring åt sidan eller tackla dig loss';
+      if (gtip !== h.galeTip) { h.galeTip = gtip; $('gale-s').textContent = gtip; }
       if (gon && gv !== h.galeV) { h.galeV = gv; $('gale-fill').style.width = gv + '%'; $('gale-box').classList.toggle('hot', gv >= 70); }
       // utslagen-ruta
       const kb = $('ko-box');

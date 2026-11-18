@@ -24,7 +24,7 @@
   <div id="gale-box" class="hidden">
     <div class="gale-h">Vinden tar dig!</div>
     <div class="gale-bar"><i id="gale-fill"></i></div>
-    <div class="gale-s">Spring åt sidan eller tackla dig loss</div>
+    <div class="gale-s" id="gale-s">Spring åt sidan eller tackla dig loss</div>
   </div>
   <div id="spec-tag" class="hidden">Du tittar på</div>
   <div id="bottom-hud">
@@ -35,11 +35,11 @@
     </div>
     <div class="ring" id="ring-tackle" title="Tackling">
       <canvas id="hud-tackle" width="120" height="84"></canvas>
-      <span class="key">Mellanslag</span>
+      <span class="key" id="hud-tkey">Mellanslag</span>
     </div>
   </div>
   <div id="hud-help">
-    <b>WASD</b> gå &nbsp;·&nbsp; <b>Mus</b> sikta &nbsp;·&nbsp; <b>Klick</b> eller <b>E</b> vapen &nbsp;·&nbsp; <b>Mellanslag</b> tackla &nbsp;·&nbsp; <b>M</b> ljud &nbsp;·&nbsp; <b>Esc</b> meny
+    <b>WASD</b> gå &nbsp;·&nbsp; <b>Mus</b> sikta &nbsp;·&nbsp; <b>Klick</b> eller <b>E</b> vapen &nbsp;·&nbsp; <b>Mellanslag</b> tackla (inte med osten) &nbsp;·&nbsp; <b>M</b> ljud &nbsp;·&nbsp; <b>Esc</b> meny
   </div>
   <div id="net-info"></div>
 </div>
@@ -121,11 +121,12 @@
     <section class="panel" id="lobby-right">
       <div class="flagbar slim"></div>
       <h2>Välj ditt tillhygge</h2>
-      <p class="hint">Du får bara välja <b>en gång</b> per match. Du startar med samma vapen varje gång du blir utslagen, och ingen annan ser vad du valt förrän matchen börjar.</p>
+      <p class="hint">Välj ett vapen och lås in det. Ångrar du dig kan du <b>låsa upp och byta</b> så länge matchen inte har startat. Du startar med samma vapen varje gång du blir utslagen, och ingen annan ser vad du valt förrän matchen börjar. Den som bär osten kan varken slåss eller tackla.</p>
       <div id="weapon-grid"></div>
       <div id="weapon-detail"></div>
       <div class="lock-row">
         <button id="btn-lock" class="btn primary big" disabled>Välj ett vapen</button>
+        <button id="btn-unlock" class="btn big hidden">Lås upp och byt vapen</button>
         <p id="lock-msg" class="hint"></p>
       </div>
       <h3>Din tröja och ditt namn</h3>

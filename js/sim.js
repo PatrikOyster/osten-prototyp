@@ -17,11 +17,13 @@ function speedMul(p, world) {
   return m;
 }
 
-/* Styrrörelse hålls på land (glider längs kusten); den som redan är i vattnet får röra sig fritt. */
+/* Styrrörelse hålls på land (glider längs kusten eller kanalkanten); den som redan är i vattnet får röra sig fritt. */
 function moveLand(p, dx, dy, map) {
   const nx = p.x + dx, ny = p.y + dy;
   if (map.onLand(nx, ny) || !map.onLand(p.x, p.y)) { p.x = nx; p.y = ny; return; }
-  const d = Math.hypot(p.x, p.y) || 1, rx = p.x / d, ry = p.y / d;
+  let rx, ry;
+  if (map.waterDir) { const w = map.waterDir(p.x, p.y); rx = w.x; ry = w.y; }   // kanalbanan: normalen mot närmaste vatten
+  else { const d = Math.hypot(p.x, p.y) || 1; rx = p.x / d; ry = p.y / d; }     // runda öar: kusten ligger runt mitten
   const dot = dx * rx + dy * ry;
   let sx = dx, sy = dy;
   if (dot > 0) { sx -= dot * rx; sy -= dot * ry; }
@@ -94,8 +96,12 @@ class Sim {
     for (const ob of this.map.obstacles) this.obHp.set(ob.id, ob.hp);
     this.cheese = { x: 0, y: 0, vx: 0, vy: 0, state: 'ground', carrier: -1, air: 0, seaT: 0, rot: 0, nudge: this.rng() * TAU };
     this.gullT = 0;
-    const order = [0, 1, 2, 3, 4, 5, 6, 7];
-    for (let i = 7; i > 0; i--) { const j = (this.rng() * (i + 1)) | 0; [order[i], order[j]] = [order[j], order[i]]; }
+    let order;
+    if (this.map.slotOrder) order = this.map.slotOrder(this.rng);   // kanalbanan: en spelare per ö först
+    else {
+      order = [0, 1, 2, 3, 4, 5, 6, 7];
+      for (let i = 7; i > 0; i--) { const j = (this.rng() * (i + 1)) | 0; [order[i], order[j]] = [order[j], order[i]]; }
+    }
     this.pmap = new Map();
     this.players = o.players.map((d, i) => {
       const p = this.makePlayer(d, order[i % 8]);
@@ -177,7 +183,8 @@ class Sim {
 
   startPlay() {
     const c = this.cheese;
-    c.vx = Math.cos(c.nudge) * 140; c.vy = Math.sin(c.nudge) * 140;
+    const sp = this.map.startPop === undefined ? 140 : this.map.startPop;   // kanalbanan: litet puff så att osten stannar nära mitten
+    c.vx = Math.cos(c.nudge) * sp; c.vy = Math.sin(c.nudge) * sp;
     for (const p of this.players) { p.lastTk = p.inp.tk; p.lastWp = p.inp.wp; p.lastWr = p.inp.wr; }
     this.ev('phase', 'play');
   }
@@ -222,6 +229,12 @@ class Sim {
     p.daze = p.dazeT > 0;
     if (!p.sw) p.a = inp.a;
     p.ad = inp.ad;
+    // Ostbäraren får inte tackla (CFG.carrierTackle). Ett tryck sparas inte till senare, och en tackling
+    // som pågår när osten plockas upp avbryts – annars kunde man köra in i någon med osten i famnen.
+    if (p.carry && !CFG.carrierTackle) {
+      p.tkBuf = 0;
+      if (p.dashT > 0) { p.dashT = 0; p.cvx *= 0.3; p.cvy *= 0.3; }
+    }
     // Tackling
     if (p.tkBuf > 0 && p.tkCd <= 0 && p.dashT <= 0 && p.recT <= 0) {
       let dx = inp.mx, dy = inp.my;
@@ -357,14 +370,24 @@ class Sim {
     const l = Math.hypot(ux, uy);
     if (l < 0.01) { ux = 0; uy = 0; } else { ux /= l; uy /= l; }
     // Osten "poppar" iväg: slumpad riktning, lite åt knuffhållet, och inåt mot ön om man är nära kusten
-    const dd = Math.hypot(p.x, p.y) || 1, cr = this.map.coastR(Math.atan2(p.y, p.x));
-    const near = clamp((dd - (cr - 380)) / 280, 0, 1);
-    const ra = this.rng() * TAU;
-    ux = ux * 0.5 + Math.cos(ra) * 0.7 - p.x / dd * near * 1.6;
-    uy = uy * 0.5 + Math.sin(ra) * 0.7 - p.y / dd * near * 1.6;
-    const ul = Math.hypot(ux, uy) || 1;
-    const sp = 170 + this.rng() * 130;
-    c.vx = ux / ul * sp + p.cvx * 0.2; c.vy = uy / ul * sp + p.cvy * 0.2;
+    const ps = this.map.popSpeed || [170, 130];
+    let ra, sp;
+    if (this.map.safeDir) {   // kanalbanan: samma slump och knuff, men riktningen böjs av så att osten inte hamnar i en kanal
+      ra = this.rng() * TAU; sp = ps[0] + this.rng() * ps[1];
+      ux = ux * 0.5 + Math.cos(ra) * 0.7; uy = uy * 0.5 + Math.sin(ra) * 0.7;
+      const sd = this.map.safeDir(p.x, p.y, ux, uy, sp / CFG.cheeseFric * 1.1 + 10);
+      ux = sd.x; uy = sd.y;
+    } else {
+      const dd = Math.hypot(p.x, p.y) || 1, cr = this.map.coastR(Math.atan2(p.y, p.x));
+      const near = clamp((dd - (cr - 380)) / 280, 0, 1);
+      ra = this.rng() * TAU;
+      ux = ux * 0.5 + Math.cos(ra) * 0.7 - p.x / dd * near * 1.6;
+      uy = uy * 0.5 + Math.sin(ra) * 0.7 - p.y / dd * near * 1.6;
+      const ul = Math.hypot(ux, uy) || 1;
+      sp = ps[0] + this.rng() * ps[1];
+      ux /= ul; uy /= ul;
+    }
+    c.vx = ux * sp + p.cvx * 0.2; c.vy = uy * sp + p.cvy * 0.2;
     p.streak = 0; this.gullT = 0;
     this.ev('drop', p.id);
   }
@@ -379,18 +402,20 @@ class Sim {
     }
     if (c.state === 'sea') {
       c.seaT += dt;
-      const d = Math.hypot(c.x, c.y) || 1;
-      c.x += c.x / d * 40 * dt; c.y += c.y / d * 40 * dt;
+      if (!this.map.still) {   // (på kanalbanan ligger osten kvar där den föll i, annars skulle den driva upp på en ö)
+        const d = Math.hypot(c.x, c.y) || 1;
+        c.x += c.x / d * 40 * dt; c.y += c.y / d * 40 * dt;
+      }
       if (c.seaT >= CFG.seaReturn) {
         c.state = 'ground'; c.x = 0; c.y = 0; c.seaT = 0; c.air = 0.6;
-        const a = this.rng() * TAU; c.vx = Math.cos(a) * 100; c.vy = Math.sin(a) * 100;
+        const a = this.rng() * TAU, pop = this.map.cheesePop || 100; c.vx = Math.cos(a) * pop; c.vy = Math.sin(a) * pop;
         this.ev('cheeseReset');
       }
       return;
     }
     c.air = Math.max(0, c.air - dt);
     const d = Math.hypot(c.x, c.y);
-    if (d < CFG.hillR) {
+    if (!this.map.hills && d < CFG.hillR) {   // (kanalbanan har ingen kulle: osten ligger stilla på mitten-ön)
       const f = 1 - d / CFG.hillR;
       let ux, uy;
       if (d > 1) { ux = c.x / d; uy = c.y / d; } else { ux = Math.cos(c.nudge); uy = Math.sin(c.nudge); }

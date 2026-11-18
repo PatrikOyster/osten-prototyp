@@ -4,8 +4,8 @@
    Ingen DOM här: filen körs också i Node-tester (tools/test-core.js).
    Allt som är "knappar att vrida på" för balans finns i CFG och WEAPONS.
    ===================================================================== */
-const GAME_VERSION = '0.2.0';
-const PROTO_VERSION = 2;   // 2: botantal (settings.bots) i stället för fill, banval (settings.map)
+const GAME_VERSION = '0.4.0';
+const PROTO_VERSION = 4;   // 4: ny bana 'canal' (Fyra öar). 3: ostbäraren kan inte tackla, 'unpick' (byta vapen i lobbyn). 2: botantal (settings.bots) i stället för fill, banval (settings.map)
 const TAU = Math.PI * 2;
 
 const CFG = {
@@ -34,6 +34,7 @@ const CFG = {
   drownSec: 0.9,
   // Tackling
   tkDur: 0.2, tkSpeed: 800, tkCd: 1.8, tkRecover: 0.3, tkKb: 560,
+  carrierTackle: false, // false (prövas från v0.3): den som bär osten kan inte tackla – då går det att ta osten. true = som i v0.2
   // KO
   respawnSec: 2.6, spawnInv: 1.5,
   // Osten
@@ -187,18 +188,19 @@ const OB_TYPES = {
   kiosk: { r: 30, hp: 4 }         // bouquinistens låda
 };
 
-/* Banor. 'ile' = Osten på ön (standard), 'place' = Torget i Paris (Seine runt om). */
+/* Banor. 'ile' = Osten på ön (standard), 'place' = Torget i Paris (Seine runt om), 'canal' = Fyra öar (kanaler och broar). */
 const MAPS = {
   ile: { id: 'ile', name: 'Osten på ön', fr: "L'Île du Fromage", desc: 'Byn, dammen och bryggan. Havet runt om.' },
-  place: { id: 'place', name: 'Torget i Paris', fr: 'La Place du Fromage', desc: 'Kullersten, marknad och karusell. Seine runt om.' }
+  place: { id: 'place', name: 'Torget i Paris', fr: 'La Place du Fromage', desc: 'Kullersten, marknad och karusell. Seine runt om.' },
+  canal: { id: 'canal', name: 'Fyra öar', fr: 'Les Quatre Îles', desc: 'Kanaler och broar mellan fyra öar. Osten startar på en liten ö i mitten.' }
 };
-const MAP_ORDER = ['ile', 'place'];
+const MAP_ORDER = ['ile', 'place', 'canal'];
 
 function coastR(th) {
   return CFG.islandR + 60 * Math.sin(3 * th + 0.4) + 35 * Math.cos(5 * th + 0.7) + 20 * Math.sin(7 * th + 1.3);
 }
 
-function makeMap(seed, kind) { return kind === 'place' ? makePlace(seed) : makeIsland(seed); }
+function makeMap(seed, kind) { return kind === 'canal' ? makeCanal(seed) : kind === 'place' ? makePlace(seed) : makeIsland(seed); }
 
 function makeIsland(seed) {
   const rng = mulberry32((seed ^ 0x51ED270B) >>> 0);
@@ -334,5 +336,116 @@ function makePlace(seed) {
     const x = Math.round(rnd(-760, 760)), y = Math.round(rnd(-660, 660));
     if (ok(x, y, OB_TYPES.barrel.r)) { add('barrel', '', x, y); n++; }
   }
+  return m;
+}
+
+/* ---------- Fyra öar: kanaler med broar och en liten ö i mitten där osten startar ----------
+   Spegelsymmetrisk i både x och y: alla fyra öarna är lika, och alla har lika långt till osten och samma skydd.
+   Vatten: ett kors av kanaler (CANAL.cw breda) plus en ringkanal runt mitten-ön.
+   Land: mitten-ön, fyra öar, fyra "ekerbroar" från varje ö in till mitten och fyra ringbroar mellan grann-öarna.
+   Man kan inte gå ut i vattnet på egen hand (som på de andra banorna), så broarna är de enda vägarna. */
+const CANAL = {
+  cw: 100,                    // kanalbredd
+  rc: 165,                    // mitten-öns radie
+  ex: 800, ey: 700,           // öarnas yttre kant (x respektive y)
+  qr: 70,                     // öarnas hörnradie
+  bw: 130,                    // brobredd
+  spokeC: 220, spokeH: 75,    // ekerbron: mitt (längs diagonalen) och halv längd
+  ringV: 440, ringU: 500,     // ringbrornas läge längs kanalen (norr/söder respektive öster/väster)
+  inset: 6                    // hur långt innanför kanten spelarens mittpunkt får gå
+};
+CANAL.rm = CANAL.rc + CANAL.cw;                          // ringkanalens ytterradie
+CANAL.qcx = (CANAL.cw / 2 + CANAL.ex) / 2; CANAL.qcy = (CANAL.cw / 2 + CANAL.ey) / 2;   // öns mittpunkt (i första kvadranten)
+CANAL.qhx = (CANAL.ex - CANAL.cw / 2) / 2; CANAL.qhy = (CANAL.ey - CANAL.cw / 2) / 2;   // öns halva mått
+
+function boxSd(px, py, hx, hy) { const qx = Math.abs(px) - hx, qy = Math.abs(py) - hy; return Math.hypot(Math.max(qx, 0), Math.max(qy, 0)) + Math.min(Math.max(qx, qy), 0); }
+/* Bara broarna (tre unika, resten fås genom spegling): avstånd till närmaste bro, negativt på bron.
+   ext förlänger bron åt båda hållen (används av canalSd: brons ändar ska ligga djupt inne på öarna, annars underskattas djupet
+   på land där bro och ö möts). Utan ext är det den synliga bron (för hinderavstånd och tester). */
+function canalBridgeSd(x, y, ext) {
+  const C = CANAL, e = ext || 0, u = Math.abs(x), v = Math.abs(y), a = (u + v) * Math.SQRT1_2, b = (u - v) * Math.SQRT1_2;
+  return Math.min(boxSd(a - C.spokeC, b, C.spokeH + e, C.bw / 2), boxSd(u, v - C.ringV, C.cw / 2 + 30 + e, C.bw / 2), boxSd(u - C.ringU, v, C.bw / 2, C.cw / 2 + 30 + e));
+}
+/* Avstånd till land (negativt = på land). Räknar i första kvadranten (u, v) eftersom allt är speglat. */
+function canalSd(x, y) {
+  const C = CANAL, u = Math.abs(x), v = Math.abs(y), r = Math.sqrt(u * u + v * v);
+  let d = r - C.rc;                                                                    // mitten-ön
+  const qx = Math.abs(u - C.qcx) - (C.qhx - C.qr), qy = Math.abs(v - C.qcy) - (C.qhy - C.qr);
+  const q = Math.max(Math.hypot(Math.max(qx, 0), Math.max(qy, 0)) + Math.min(Math.max(qx, qy), 0) - C.qr, C.rm - r);   // en ö: rundad ruta minus ringkanalen
+  if (q < d) d = q;
+  const br = canalBridgeSd(x, y, 45);
+  return br < d ? br : d;
+}
+
+/* Hindren i första kvadranten (u, v); speglas till de andra tre. [typ, variant, u, v] */
+const CANAL_LAYOUT = [
+  ['house', 0, 695, 335],
+  ['tree', 'platane', 240, 600], ['tree', 'platane', 350, 625], ['tree', 'platane', 455, 625],
+  ['stall', 0, 315, 330], ['stall', 1, 420, 245],
+  ['column', '', 500, 390],
+  ['cafe', '', 625, 185], ['cafe', '', 705, 215], ['cafe', '', 560, 250],
+  ['kiosk', '', 722, 128],
+  ['barrel', '', 620, 410], ['barrel', '', 200, 520]
+];
+const CANAL_SPAWNS = [[700, 515], [585, 610]];      // två startplatser per ö, i yttre hörnet
+const CANAL_QUADS = [[-1, -1], [1, -1], [1, 1], [-1, 1]];   // nordväst, nordost, sydost, sydväst
+
+function makeCanal(seed) {
+  const C = CANAL, G = 1e-3;
+  const grad = (x, y, e) => { const gx = canalSd(x + e, y) - canalSd(x - e, y), gy = canalSd(x, y + e) - canalSd(x, y - e), l = Math.hypot(gx, gy); return l > G ? [gx / l, gy / l] : [0, 0]; };
+  const out = { x: 0, y: 0 };
+  const m = {
+    kind: 'canal', seed, obstacles: [], spawns: [], coastR: () => C.ex, fleeMargin: 0,
+    pond: null, pier: null, village: null, court: null,
+    nav: true,                                  // botarna navigerar med rutnät (bots.js)
+    still: true,                                // osten i vattnet driver inte iväg (den ligger kvar i kanalen tills den flyter tillbaka)
+    hills: [],                                  // ingen kulle: osten ligger stilla på mitten-ön (rättvist)
+    cheesePop: 60,                              // hur häftigt osten "poppar" när den flyter tillbaka (så att den stannar på mitten-ön)
+    popSpeed: [110, 80],                        // spridning av ostens fart när bäraren fälls (annars [170, 130])
+    startPop: 40,                               // ostens fart när matchen startar (annars 140): den ska ligga kvar nära mitten, lika långt från alla
+    bounds: { x0: -C.ex - 40, y0: -C.ey - 40, x1: C.ex + 40, y1: C.ey + 40 },
+    sd: canalSd,
+    onLand(x, y) { return canalSd(x, y) < -C.inset; },
+    inPond() { return false; },
+    /* Enhetsvektor från (x, y) mot närmaste vatten (där rörelsen ska glida längs kanten). Återanvänder ett objekt. */
+    waterDir(x, y) { const g = grad(x, y, 2.5); out.x = g[0]; out.y = g[1]; return out; },
+    /* Närmaste land sett från vattnet: enhetsvektor åt det hållet */
+    landDir(x, y) { const g = grad(x, y, 4); if (g[0] === 0 && g[1] === 0) { const l = Math.hypot(x, y) || 1; out.x = -x / l; out.y = -y / l; } else { out.x = -g[0]; out.y = -g[1]; } return out; },
+    /* Riktning (enhetsvektor) för ostens "pop" när bäraren fälls: den önskade riktningen (dx, dy) om ostens hela färd (reach px)
+       ligger kvar på land, annars den närmaste riktning (steg om 15 grader) som gör det, annars den som är fri längst.
+       Mäter med strålar mot sd/onLand och inte med lutningen: den pekar fel inne på land där en bro och en ö möts. */
+    safeDir(x, y, dx, dy, reach) {
+      const a0 = Math.atan2(dy, dx), step = 8, margin = C.inset + 4;
+      let bestA = a0, bestL = -1;
+      for (let k = 0; k < 24; k++) {
+        const a = a0 + (k === 0 ? 0 : ((k + 1) >> 1) * (k & 1 ? 1 : -1) * Math.PI / 12), ca = Math.cos(a), sa = Math.sin(a);
+        let L = 0;
+        while (L < reach && canalSd(x + ca * (L + step), y + sa * (L + step)) < -margin) L += step;
+        if (L >= reach) { out.x = ca; out.y = sa; return out; }
+        if (L > bestL) { bestL = L; bestA = a; }
+      }
+      out.x = Math.cos(bestA); out.y = Math.sin(bestA);
+      return out;
+    },
+    /* Hur startplatserna delas ut: en per ö först, sedan de andra (så att få spelare hamnar på olika öar) */
+    slotOrder(rng) {
+      const q = [0, 1, 2, 3];
+      for (let i = 3; i > 0; i--) { const j = (rng() * (i + 1)) | 0; [q[i], q[j]] = [q[j], q[i]]; }
+      const f = q.map(() => (rng() < 0.5 ? 0 : 1));
+      return q.map((qq, i) => qq * 2 + f[i]).concat(q.map((qq, i) => qq * 2 + 1 - f[i]));
+    }
+  };
+  CANAL_QUADS.forEach(([sx, sy], qi) => {
+    for (const [u, v] of CANAL_SPAWNS) { const x = sx * u, y = sy * v; m.spawns.push({ x, y, a: Math.atan2(-y, -x) }); }
+  });
+  let nid = 1;
+  const goods = ['fromage', 'fruits', 'pain', 'fleurs'], houses = ['boulangerie', 'fromagerie', 'cafe', 'maison'];
+  CANAL_LAYOUT.forEach(([t, v, u, w]) => {
+    CANAL_QUADS.forEach(([sx, sy], qi) => {
+      const T = OB_TYPES[t];
+      const vv = t === 'house' ? houses[(v + qi) % 4] : t === 'stall' ? goods[(v + qi) % 4] : v;
+      m.obstacles.push({ id: nid++, t, v: vv, x: sx * u, y: sy * w, r: T.r, hp: T.hp });
+    });
+  });
   return m;
 }

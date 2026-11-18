@@ -1,6 +1,6 @@
 {
   "name": "le-grand-fromage",
-  "version": "0.2.0",
+  "version": "0.4.0",
   "private": true,
   "description": "Osten på ön – webbspel där den som bär osten längst vinner (prototyp)",
   "scripts": {

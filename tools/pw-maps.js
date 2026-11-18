@@ -25,7 +25,7 @@ const check = (ok, msg) => { if (!ok) { fails++; console.log('  FAIL', msg); } e
   await page.fill('#name', 'Patrik');
   await page.click('#btn-solo'); await sleep(600);
   console.log('Lobby');
-  check(await page.evaluate(() => document.querySelectorAll('#map-sel .mapcard').length) === 2, 'två bankort i lobbyn');
+  check(await page.evaluate(() => document.querySelectorAll('#map-sel .mapcard').length) === 3, 'tre bankort i lobbyn');
   check(await page.evaluate(() => App.renderer.map.kind) === 'ile', 'ön är förvald');
   await shot('m01-lobby-ile');
 

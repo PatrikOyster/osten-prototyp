@@ -101,6 +101,7 @@ const App = {
       host: (n, s) => this.startHost(n, s), solo: (n, s) => this.startSolo(n, s), join: (c, n, s) => this.startJoin(c, n, s),
       start: () => { const s = this.session; if (s && s.role !== 'client') s.start(); },
       pick: w => { const s = this.session; if (s) s.pick(w); },
+      unpick: () => { const s = this.session; if (s && s.unpick) s.unpick(); },
       profile: (n, k) => { const s = this.session; if (s) s.setProfile(n, k); },
       settings: o => { const s = this.session; if (s && s.setSettings) s.setSettings(o); },
       leave: () => this.leave(), again: () => { const s = this.session; if (s && s.backToLobby) s.backToLobby(); },

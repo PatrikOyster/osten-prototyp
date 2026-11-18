@@ -1,4 +1,4 @@
-# Le Grand Fromage – speldesign (prototyp v0.2)
+# Le Grand Fromage – speldesign (prototyp v0.4)
 
 Det här dokumentet är kortversionen av idén och de beslut som fattats i prototypen. Längre resonemang och ursprungsidén finns i konceptdokumentet.
 
@@ -8,8 +8,8 @@ Det här dokumentet är kortversionen av idén och de beslut som fattats i proto
 
 ## Kärnloopen
 
-1. Alla väljer **ett vapen** i lobbyn (hemligt tills avslöjandet precis före start). Man får bara välja en gång per match.
-2. Alla spawnar vid banans kant (ön eller torget). En ost ligger på kullen i mitten.
+1. Alla väljer **ett vapen** i lobbyn (hemligt tills avslöjandet precis före start). Man kan låsa upp och byta så länge matchen inte har startat; efter start ligger vapnet fast.
+2. Alla spawnar vid banans kant (ön, torget, eller var sin ö på Fyra öar). En ost ligger i mitten (på kullen, och på Fyra öar på en liten mitten-ö).
 3. Man springer, tacklar och slåss för att få **bära osten**. Poängen är *sekunder som bärare*, summerat över hela matchen.
 4. Blir man träffad av *vad som helst* (tackling, vapen, explosion, hus som rasar, havet) tappar man osten, ligger en kort stund och återuppstår vid kusten – med samma vapen.
 5. Efter 5 minuter vinner den med mest ostsekunder.
@@ -26,7 +26,7 @@ Det som ska kännas: ständigt omkastade lägen, en bärare som är jagad och sk
 
 ## Banor
 
-Valet görs av värden i lobbyn (kort med förhandsbild). Båda banorna följer samma regler och har samma gränssnitt i koden.
+Valet görs av värden i lobbyn (kort med förhandsbild). Alla tre banorna följer samma regler och har samma gränssnitt i koden (Fyra öar har några extra hjälpfunktioner, se `CLAUDE.md`).
 
 ## Osten på ön
 
@@ -43,6 +43,18 @@ Valet görs av värden i lobbyn (kort med förhandsbild). Båda banorna följer 
 - **Ostkullen** är ett stenpodium med trappsteg och pilar utåt (osten rullar åt det hållet), med en blå stjärna i mitten.
 - Spegelsymmetrisk uppsättning så att ingen startplats har fördel: sex **marknadsstånd** (ost, frukt, bröd, blommor), fyra **Morris-kolonner**, sex **cafébord**, tolv **platanträd** med galler, fyra **bouquinister** på kajen, **karusell** och **Eiffeltorn** vid kortändarna, **bassäng** med leksaksbåtar och en **pétanquebana**. Bara de åtta tunnorna slumpas fram av fröet. Allt hinder går att förstöra.
 - Skillnaden mot ön: tätare och mer symmetrisk, fler hinder att gömma sig bakom, ingen brygga och ingen by. Bassängen fungerar som öns damm: det går att vada i den, men långsamt (och osten rullar trögt där).
+
+## Fyra öar
+
+*Patriks önskemål efter provspel:* en bana med små kanaler och broar mellan fyra öar, så att man inte bara kan springa rakt in i mitten och på den som bär osten – och en ö i mitten där osten landar, annars tycker någon att det är orättvist.
+
+- **Fyra likadana öar** (cirka 750 × 650 enheter, kullersten och park omväxlande) i hörnen, åtskilda av ett kors av **100 enheter breda kanaler**, och en liten rund **mitten-ö** (radie 165) med ett stenpodium och en trikolorring. Osten startar där och flyter tillbaka dit efter fem sekunder om den hamnat i vattnet. Ingen kulle: osten ligger stilla (en liten puff vid matchstart, 40 i stället för 140).
+- **Broar**: en bro från varje ö in till mitten över ringkanalen (fyra *ekerbroar*, diagonalt) och en bro över kanalen mellan varje par grannöar (fyra *ringbroar*). Broarna är 130 breda och är de enda vägarna: till fots går det inte att gå ut i vattnet, man glider längs kajkanten. Mitten nås alltså bara genom fyra trånga passager, och en jagad bärare kan försöka ta sig över dem före jagarna.
+- **Rättvis**: banan är exakt spegelsymmetrisk i både x och y, alla fyra öarna har exakt samma två startplatser (vända mot mitten) och samma väg över bron till osten, och startordningen ger en spelare per ö först (så att få spelare inte hamnar på samma ö). Layouten är helt fast – ingen slump alls.
+- På varje ö: ett hus (boulangeri, fromagerie, café eller maison), tre platanträd, två marknadsstånd, en Morris-kolonn, tre cafébord, en kiosk och två tunnor. Allt går att förstöra. Hinder hålls borta från kajkanter, brohuvuden och mitten-ön (testas).
+- Osten som tappas vid en kant eller en bro poppar alltid åt ett håll där den stannar på land (`safeDir`), så den hamnar inte i kanalen av en slump. Hamnar den i vattnet (bäraren faller i) ligger den kvar där tills den efter fem sekunder flyter tillbaka till mitten-ön.
+- Botarna navigerar med ett rutnät och kortaste vägen över broarna; den jagade bäraren väljer den ruta den hinner till före alla andra (och tar hänsyn till att skott går över vattnet).
+- Botstatistik (24 matcher med åtta botar per bana): ägarbyten per match 74 (på de andra banorna 61), mediantid per bärning 2,0 s (2,7), någon bär osten 68 % av tiden (73 %), tacklingar fäller ostbäraren 20 gånger per match (9), drunknade 7,6 per match (4). Alltså mer kaos kring broarna – vilket är meningen, men det återstår att se hur det känns med människor.
 
 ## Vapen
 
@@ -63,7 +75,9 @@ Valet görs av värden i lobbyn (kort med förhandsbild). Båda banorna följer 
 
 Vapnen är datadrivna (`WEAPONS` i `js/cfg.js`) så att balansen kan justeras utan att röra logiken.
 
-**Tackling** är gratis för alla: en kort sprint (0,2 s) med längre återhämtning och 1,8 s mellan försök. Bäraren kan tackla men inte använda sitt vapen och är något långsammare – det är det som gör att en bärare kan jagas.
+**Tackling** är gratis för alla utom ostbäraren: en kort sprint (0,2 s) med längre återhämtning och 1,8 s mellan försök. Bäraren kan varken tackla eller använda sitt vapen och är något långsammare – det är det som gör att en bärare kan jagas.
+
+*Varför:* i v0.2 kunde bäraren tackla bort den som kom nära, och det blev för svårt att ta osten. Sedan v0.3 är bäraren försvarslös och får klara sig med att springa, väja bakom hinder och med skyddstiden (1 s) efter upptagning. Växeln är `CFG.carrierTackle` (`false` = ny regel). Botstatistik, 24 matcher med samma frön: ägarbyten per match 55 → 61, mediantid per bärning 3,1 → 2,7 s, andelen av matchen då någon bär osten i stort sett oförändrad (73–74 %).
 
 ## Franskt tema (tillägg efter första genomläsningen)
 
@@ -84,10 +98,10 @@ Upp till 8 spelare, värd-auktoritativt och spelare-till-spelare (WebRTC), rumsl
 
 ## Öppna frågor att svara på med riktiga spelare
 
-- Är 5 minuter rätt? Är ön för liten/stor för åtta spelare? (Prototypen korsas på ~6–7 s.) Vilken bana är roligast – den öppna ön eller det tätare, symmetriska torget?
+- Är 5 minuter rätt? Är ön för liten/stor för åtta spelare? (Prototypen korsas på ~6–7 s.) Vilken bana är roligast – den öppna ön, det tätare, symmetriska torget eller kanalerna med broar? På Fyra öar: är broarna lagom trånga (mer bråk, men inte för mycket köbildning), är mitten-ön en rättvis start och är det kul att kunna fälla en bärare ut i kanalen?
 - Är den nya lövblåsaren rätt avvägd nu när den faktiskt slår ut folk (särskilt vid vatten)?
 - Är något vapen för starkt eller tråkigt att möta? (Botstatistiken tyder på att tackling dominerar – är det bra?)
-- Är det för lätt eller för svårt att behålla osten? Räcker Parisduvan som motvikt?
+- Är det för lätt eller för svårt att behålla osten, nu när bäraren inte kan tackla? Räcker skyddstiden (1 s), farten (93 %) och Parisduvan som motvikt, eller behöver bäraren något annat försvar (en kort spurt, en sköld)?
 - Vill man kunna byta vapen mellan matcher i en serie, eller är *ett val* just det roliga?
 - Behövs lag, rundor eller fler banor för att hålla intresset uppe?
 - Fungerar 8 spelare på mobil (pekstyrning och sikte) – eller behövs ett förenklat styrsätt?

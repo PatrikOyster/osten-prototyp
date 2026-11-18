@@ -26,9 +26,9 @@ function coastPath(c, off, wob, t, fn) {
 }
 
 /* Sjöfärger per bana (övre/nedre kant av bakgrunden) */
-const SEA_THEME = { ile: ['#46b9d8', '#2c8fbd'], place: ['#6dbbad', '#3f918a'] };
+const SEA_THEME = { ile: ['#46b9d8', '#2c8fbd'], place: ['#6dbbad', '#3f918a'], canal: ['#4cc0b8', '#2b8fa3'] };
 
-function buildGround(map, S) { return map.kind === 'place' ? buildPlaceGround(map, S) : buildIslandGround(map, S); }
+function buildGround(map, S) { return map.kind === 'canal' ? buildCanalGround(map, S) : map.kind === 'place' ? buildPlaceGround(map, S) : buildIslandGround(map, S); }
 
 /* ---------- Statisk markbild för ön: sand, gräs, kulle, damm, brygga, torg ---------- */
 function buildIslandGround(map, S) {
@@ -285,8 +285,224 @@ function buildPlaceGround(map, S) {
   return cv;
 }
 
+/* ---------- Fyra öar: delade former (markbilden, havet och kartformerna använder samma geometri) ---------- */
+/* Broarna i världskoordinater: mitt, riktning (längs gångriktningen), halv längd och halv bredd */
+function canalBridgeList() {
+  const C = CANAL, out = [], d = C.spokeC * Math.SQRT1_2;
+  for (const [sx, sy] of CANAL_QUADS) out.push({ cx: sx * d, cy: sy * d, ang: Math.atan2(sy, sx), hl: C.spokeH, hw: C.bw / 2, k: 'spoke' });
+  for (const sy of [-1, 1]) out.push({ cx: 0, cy: sy * C.ringV, ang: 0, hl: C.cw / 2 + 30, hw: C.bw / 2, k: 'ring' });
+  for (const sx of [-1, 1]) out.push({ cx: sx * C.ringU, cy: 0, ang: Math.PI / 2, hl: C.cw / 2 + 30, hw: C.bw / 2, k: 'ring' });
+  return out;
+}
+/* En ö i första kvadranten (u, v): rundad ruta minus ringkanalen, utvidgad off px utåt. Speglas med c.scale(sx, sy). */
+function canalIslandPath(c, off) {
+  const C = CANAL, a = C.cw / 2 - off, X = C.ex + off, Y = C.ey + off, r = Math.max(2, C.qr + off), rho = C.rm - off;
+  const t = Math.sqrt(Math.max(0, rho * rho - a * a));
+  c.beginPath();
+  c.moveTo(a, t); c.lineTo(a, Y - r); c.arcTo(a, Y, a + r, Y, r);
+  c.lineTo(X - r, Y); c.arcTo(X, Y, X, Y - r, r);
+  c.lineTo(X, a + r); c.arcTo(X, a, X - r, a, r);
+  c.lineTo(t, a); c.arc(0, 0, rho, Math.atan2(a, t), Math.atan2(t, a), false);
+  c.closePath();
+}
+function canalBridgePath(c, b, off) {
+  c.save(); c.translate(b.cx, b.cy); c.rotate(b.ang);
+  c.beginPath(); c.rect(-b.hl - off, -b.hw - off, 2 * (b.hl + off), 2 * (b.hw + off));
+  c.restore();
+}
+
+/* ---------- Fyra öar: kajer, kullersten/park, broar, mitten-ön med ostpodium ---------- */
+function buildCanalGround(map, S) {
+  const R = GROUND_R, N = Math.ceil(R * 2 * S);
+  const cv = document.createElement('canvas'); cv.width = N; cv.height = N;
+  const c = cv.getContext('2d');
+  c.setTransform(S, 0, 0, S, R * S, R * S);
+  const rng = mulberry32(0xCA9A1), rnd = (a, b) => a + (b - a) * rng();
+  const C = CANAL, bridges = canalBridgeList();
+  c.lineJoin = 'round'; c.lineCap = 'round';
+  // kör fn(qi) med ön i första kvadranten (u, v) speglad till rätt hörn; fn(qi, true) = rita i världskoordinater men med öns form som klippning
+  const quad = fn => CANAL_QUADS.forEach(([sx, sy], qi) => { c.save(); c.scale(sx, sy); fn(qi, sx, sy); c.restore(); });
+  const clipIsland = (qi, sx, sy, off) => { c.save(); c.scale(sx, sy); canalIslandPath(c, off); c.clip(); c.scale(sx, sy); };   // efteråt gäller världskoordinater
+  const center = off => { c.beginPath(); c.arc(0, 0, C.rc + off, 0, TAU); };
+  const park = qi => qi === 1 || qi === 3;          // nordost och sydväst är parker, de andra kullerstensplatser (diagonalt = rättvist)
+
+  // Skuggor på vattnet runt alla landytor
+  for (const [off, a] of [[38, 0.06], [27, 0.07], [17, 0.09], [9, 0.12]]) {
+    c.fillStyle = 'rgba(8,55,65,' + a + ')';
+    quad(() => { canalIslandPath(c, off); c.fill(); });
+    center(off); c.fill();
+    for (const b of bridges) { canalBridgePath(c, b, off); c.fill(); }
+  }
+  // Kajmur (sten) med fogar
+  const quay = (off, draw) => { quad(() => { canalIslandPath(c, off); draw(); }); center(off); draw(); };
+  quay(0, () => { c.fillStyle = '#cfc2a3'; c.fill(); c.lineWidth = 6; c.strokeStyle = OUT; c.stroke(); });
+  quay(-14, () => { c.setLineDash([2.4, 19]); c.lineWidth = 26; c.strokeStyle = 'rgba(95,75,45,0.34)'; c.stroke(); c.setLineDash([]); });
+  // Innerytan (kullersten eller gräs) målas över kajens insida
+  quad((qi) => { canalIslandPath(c, -28); c.fillStyle = park(qi) ? '#92d377' : '#efe3c6'; c.fill(); });
+  center(-28); c.fillStyle = '#efe3c6'; c.fill();
+  quad(() => { canalIslandPath(c, -15); c.lineWidth = 2.4; c.strokeStyle = 'rgba(95,75,45,0.40)'; c.stroke(); });
+  quad(() => { canalIslandPath(c, -28); c.lineWidth = 4; c.strokeStyle = '#a28e68'; c.stroke(); });
+  center(-28); c.lineWidth = 4; c.strokeStyle = '#a28e68'; c.stroke();
+
+  // Öarnas ytor
+  CANAL_QUADS.forEach(([sx, sy], qi) => {
+    clipIsland(qi, sx, sy, -29);
+    if (!park(qi)) {
+      // Kullersten/plattor i förband
+      const TW = 96, TH = 60;
+      for (let ty = -18; ty < 18; ty++) {
+        const off = (ty & 1) ? TW / 2 : 0;
+        for (let tx = -13; tx < 13; tx++) {
+          const h = hash2(tx + 31, ty - 17);
+          c.fillStyle = h < 0.28 ? 'rgba(165,135,85,0.13)' : h < 0.56 ? 'rgba(255,255,255,0.22)' : h < 0.72 ? 'rgba(120,100,60,0.06)' : 'rgba(0,0,0,0)';
+          c.fillRect(tx * TW + off, ty * TH, TW, TH);
+        }
+      }
+      c.strokeStyle = 'rgba(130,108,70,0.30)'; c.lineWidth = 2.2;
+      for (let ty = -18; ty <= 18; ty++) {
+        c.beginPath(); c.moveTo(-1150, ty * TH); c.lineTo(1150, ty * TH); c.stroke();
+        const off = (ty & 1) ? TW / 2 : 0;
+        for (let tx = -13; tx <= 13; tx++) { const x = tx * TW + off; c.beginPath(); c.moveTo(x, ty * TH); c.lineTo(x, (ty + 1) * TH); c.stroke(); }
+      }
+      for (let i = 0; i < 500; i++) { c.fillStyle = 'rgba(120,100,70,0.20)'; c.beginPath(); c.ellipse(sx * rnd(60, 800), sy * rnd(60, 700), rnd(2, 4.5), rnd(1.5, 3), rnd(0, 3), 0, TAU); c.fill(); }
+    } else {
+      // Park: gräsmatta med fläckar, tuvor och blommor
+      for (let i = 0; i < 38; i++) {
+        c.fillStyle = i & 1 ? 'rgba(255,255,255,0.07)' : 'rgba(30,90,40,0.08)';
+        c.beginPath(); c.ellipse(sx * rnd(60, 800), sy * rnd(60, 700), rnd(50, 140), rnd(35, 95), rnd(0, 3), 0, TAU); c.fill();
+      }
+      for (let i = 0; i < 380; i++) {
+        const x = sx * rnd(60, 800), y = sy * rnd(60, 700);
+        c.strokeStyle = rng() < 0.5 ? '#6cb85a' : '#5aa84c'; c.lineWidth = 2.6;
+        c.beginPath(); c.moveTo(x - 4, y); c.lineTo(x - 6.5, y - 7); c.moveTo(x, y); c.lineTo(x, y - 9.5); c.moveTo(x + 4, y); c.lineTo(x + 6.5, y - 7); c.stroke();
+      }
+      const FL = ['#ffffff', '#ffd23f', '#ff7aa8', '#8fd3ff', '#ffb36b'];
+      for (let i = 0; i < 90; i++) {
+        const x = sx * rnd(60, 800), y = sy * rnd(60, 700);
+        c.fillStyle = FL[(rng() * FL.length) | 0];
+        for (let k = 0; k < 5; k++) { const aa = k * TAU / 5; c.beginPath(); c.arc(x + Math.cos(aa) * 3, y + Math.sin(aa) * 3, 2.3, 0, TAU); c.fill(); }
+        c.fillStyle = '#e8a800'; c.beginPath(); c.arc(x, y, 1.8, 0, TAU); c.fill();
+      }
+    }
+    c.restore();
+  });
+  // Stigar i parkerna: grus från brohuvudena till öns mitt, och en liten plats i mitten
+  const gravel = (x0, y0, x1, y1, cx, cy) => {
+    c.beginPath(); c.moveTo(x0, y0); c.quadraticCurveTo(cx, cy, x1, y1);
+    c.lineCap = 'round'; c.strokeStyle = '#b9a57e'; c.lineWidth = 64; c.stroke();
+    c.strokeStyle = '#e8dab9'; c.lineWidth = 54; c.stroke();
+    for (let k = 0; k <= 40; k++) { const t = k / 40, mt = 1 - t, px = mt * mt * x0 + 2 * mt * t * cx + t * t * x1, py = mt * mt * y0 + 2 * mt * t * cy + t * t * y1; c.fillStyle = 'rgba(120,100,70,0.26)'; c.beginPath(); c.ellipse(px + rnd(-18, 18), py + rnd(-18, 18), rnd(4, 7), rnd(3, 5), rnd(0, 3), 0, TAU); c.fill(); }
+  };
+  CANAL_QUADS.forEach(([sx, sy], qi) => {
+    const d = (C.spokeC + C.spokeH + 10) * Math.SQRT1_2;
+    // plats i öns mitt (alla öar): rundel med ring
+    const px = sx * C.qcx, py = sy * C.qcy;
+    if (park(qi)) {
+      clipIsland(qi, sx, sy, -29);
+      gravel(sx * d, sy * d, px, py, sx * (d + 90), sy * (C.qcy - 20));
+      gravel(sx * 70, sy * C.ringV, px, py, sx * 220, sy * (C.ringV - 10));
+      gravel(sx * C.ringU, sy * 70, px, py, sx * (C.ringU - 20), sy * 210);
+      c.restore();
+    }
+    c.beginPath(); c.arc(px, py, 78, 0, TAU); c.fillStyle = park(qi) ? '#e8dab9' : '#e3d5b4'; c.fill(); c.lineWidth = 5; c.strokeStyle = '#b09a70'; c.stroke();
+    c.beginPath(); c.arc(px, py, 60, 0, TAU); c.setLineDash([9, 8]); c.strokeStyle = 'rgba(120,100,70,0.45)'; c.lineWidth = 3; c.stroke(); c.setLineDash([]);
+    for (let k = 0; k < 8; k++) { const a = k * TAU / 8; c.beginPath(); c.moveTo(px + Math.cos(a) * 14, py + Math.sin(a) * 14); c.lineTo(px + Math.cos(a) * 54, py + Math.sin(a) * 54); c.strokeStyle = 'rgba(120,100,70,0.35)'; c.lineWidth = 3; c.stroke(); }
+    c.beginPath(); c.arc(px, py, 12, 0, TAU); c.fillStyle = (qi & 1) ? '#2442a8' : '#d62839'; c.fill(); c.lineWidth = 3; c.strokeStyle = OUT; c.stroke();
+  });
+  // Trikolor-kant inlagd i stenen längs ytterkajen (kullerstensöarna) respektive häck (parkerna)
+  const band = (qi, sx, sy, off, w, col) => { c.save(); c.scale(sx, sy); canalIslandPath(c, off); c.lineWidth = w; c.strokeStyle = col; c.stroke(); c.restore(); };
+  CANAL_QUADS.forEach(([sx, sy], qi) => {
+    clipIsland(qi, sx, sy, -29);
+    if (!park(qi)) { band(qi, sx, sy, -62, 36, OUT); band(qi, sx, sy, -51.5, 11, '#2442a8'); band(qi, sx, sy, -62, 11, '#ffffff'); band(qi, sx, sy, -72.5, 11, '#d62839'); }
+    else { band(qi, sx, sy, -52, 30, OUT); band(qi, sx, sy, -52, 23, '#3f9a48'); band(qi, sx, sy, -57, 9, '#58b85a'); band(qi, sx, sy, -46, 6, 'rgba(20,80,30,0.45)'); }
+    c.restore();
+  });
+  // Plantgropar med galler under träden
+  for (const ob of map.obstacles) {
+    if (ob.t !== 'tree') continue;
+    c.beginPath(); c.ellipse(ob.x, ob.y + 8, 33, 14, 0, 0, TAU); c.fillStyle = '#82735e'; c.fill(); c.lineWidth = 3; c.strokeStyle = OUT; c.stroke();
+    c.beginPath(); c.ellipse(ob.x, ob.y + 8, 22, 9, 0, 0, TAU); c.lineWidth = 2; c.strokeStyle = 'rgba(42,26,18,0.55)'; c.stroke();
+    for (let k = 0; k < 8; k++) { const a = k * TAU / 8; c.beginPath(); c.moveTo(ob.x + Math.cos(a) * 9, ob.y + 8 + Math.sin(a) * 4); c.lineTo(ob.x + Math.cos(a) * 31, ob.y + 8 + Math.sin(a) * 13); c.stroke(); }
+  }
+  // Stenpodiet i mitten (där osten startar och återvänder)
+  for (const [rr, col] of [[104, '#d2c7ac'], [86, '#dcd2b8'], [68, '#e6dcc5'], [50, '#f0e8d4']]) {
+    c.beginPath(); c.arc(0, 0, rr, 0, TAU); c.fillStyle = col; c.fill(); c.lineWidth = 4; c.strokeStyle = '#8a7855'; c.stroke();
+    c.beginPath(); c.arc(0, 0, rr - 6, Math.PI * 1.05, Math.PI * 1.95); c.strokeStyle = 'rgba(255,255,255,0.55)'; c.lineWidth = 4; c.stroke();
+  }
+  c.beginPath();
+  for (let i = 0; i < 16; i++) { const a = i * TAU / 16 - Math.PI / 2, r = i & 1 ? 30 : 62; if (i) c.lineTo(Math.cos(a) * r, Math.sin(a) * r); else c.moveTo(Math.cos(a) * r, Math.sin(a) * r); }
+  c.closePath(); c.fillStyle = 'rgba(36,66,168,0.20)'; c.fill(); c.lineWidth = 3; c.strokeStyle = 'rgba(36,66,168,0.55)'; c.stroke();
+  c.beginPath(); c.arc(0, 0, 27, 0, TAU); c.fillStyle = '#d9cfb8'; c.fill(); c.lineWidth = 4; c.strokeStyle = OUT; c.stroke();
+  c.beginPath(); c.arc(0, 0, 18, 0, TAU); c.fillStyle = '#efe6d0'; c.fill(); c.lineWidth = 3; c.strokeStyle = 'rgba(42,26,18,0.5)'; c.stroke();
+  // Trikolor-ring runt mitten-ön
+  center(-47); c.lineWidth = 32; c.strokeStyle = OUT; c.stroke();
+  center(-37); c.lineWidth = 9; c.strokeStyle = '#d62839'; c.stroke();
+  center(-47); c.lineWidth = 9; c.strokeStyle = '#ffffff'; c.stroke();
+  center(-57); c.lineWidth = 9; c.strokeStyle = '#2442a8'; c.stroke();
+  // Broar: stendäck, plankor, räcken med stolpar
+  for (const b of bridges) {
+    c.save(); c.translate(b.cx, b.cy); c.rotate(b.ang);
+    const hl = b.hl, hw = b.hw;
+    c.fillStyle = '#e4d8b9'; c.fillRect(-hl, -hw, 2 * hl, 2 * hw);
+    c.strokeStyle = 'rgba(120,95,55,0.40)'; c.lineWidth = 2.2;
+    for (let x = -hl + 9; x < hl; x += 13) { c.beginPath(); c.moveTo(x, -hw + 12); c.lineTo(x, hw - 12); c.stroke(); }
+    for (const sg of [-1, 1]) {
+      const y0 = sg > 0 ? hw - 15 : -hw, y1 = sg > 0 ? hw : -hw + 15;
+      c.beginPath(); c.rect(-hl + 4, y0, 2 * hl - 8, y1 - y0); c.fillStyle = '#d3c6a6'; c.fill(); c.lineWidth = 4; c.strokeStyle = OUT; c.stroke();
+      c.beginPath(); c.moveTo(-hl + 8, (y0 + y1) / 2 + (sg > 0 ? -2 : 2)); c.lineTo(hl - 8, (y0 + y1) / 2 + (sg > 0 ? -2 : 2)); c.strokeStyle = 'rgba(255,255,255,0.55)'; c.lineWidth = 3; c.stroke();
+      for (const sh of [-1, 1]) {
+        c.beginPath(); c.arc(sh * (hl - 12), sg * (hw - 7.5), 11, 0, TAU); c.fillStyle = '#e8dcc0'; c.fill(); c.lineWidth = 3.5; c.strokeStyle = OUT; c.stroke();
+        c.beginPath(); c.arc(sh * (hl - 12) - 2, sg * (hw - 7.5) - 2, 4.5, 0, TAU); c.fillStyle = 'rgba(255,255,255,0.65)'; c.fill();
+      }
+    }
+    c.restore();
+  }
+  // Livbojar på ytterkajerna och förtöjningspollare längs kanalerna
+  const buoy = (x, y) => {
+    c.beginPath(); c.arc(x, y, 9, 0, TAU); c.fillStyle = '#fff'; c.fill();
+    for (let k = 0; k < 4; k += 2) { c.beginPath(); c.moveTo(x, y); c.arc(x, y, 9, k * Math.PI / 2, (k + 1) * Math.PI / 2); c.closePath(); c.fillStyle = '#d62839'; c.fill(); }
+    c.beginPath(); c.arc(x, y, 9, 0, TAU); c.lineWidth = 2.4; c.strokeStyle = OUT; c.stroke();
+    c.beginPath(); c.arc(x, y, 3.4, 0, TAU); c.fillStyle = '#cfc2a3'; c.fill(); c.lineWidth = 1.6; c.stroke();
+  };
+  const bollard = (x, y) => { c.beginPath(); c.arc(x, y, 6.5, 0, TAU); c.fillStyle = '#4a3e34'; c.fill(); c.lineWidth = 2.2; c.strokeStyle = OUT; c.stroke(); c.beginPath(); c.arc(x - 1.6, y - 1.8, 2.2, 0, TAU); c.fillStyle = 'rgba(255,255,255,0.4)'; c.fill(); };
+  for (const [sx, sy] of CANAL_QUADS) {
+    for (const [u, v] of [[270, C.ey - 14], [590, C.ey - 14], [C.ex - 14, 250], [C.ex - 14, 520]]) buoy(sx * u, sy * v);
+    for (const u of [300, 380, 600, 680, 750]) { if (Math.abs(u - C.ringU) < 95) continue; bollard(sx * u, sy * 64); }
+    for (const v of [330, 560, 620]) { if (Math.abs(v - C.ringV) < 95) continue; bollard(sx * 64, sy * v); }
+  }
+  // Startplatser: kokard i tre färger
+  for (const sp of map.spawns) {
+    for (const [r, col] of [[46, '#d62839'], [34, '#ffffff'], [22, '#2442a8']]) { c.beginPath(); c.arc(sp.x, sp.y, r, 0, TAU); c.fillStyle = col; c.fill(); }
+    c.beginPath(); c.arc(sp.x, sp.y, 46, 0, TAU); c.lineWidth = 4; c.strokeStyle = OUT; c.stroke();
+  }
+  return cv;
+}
+
 /* ---------- Kartformer för minikarta och banväljare (bygger på världskoordinater) ---------- */
 function drawMapShapes(c, map, detail) {
+  if (map.kind === 'canal') {
+    const C = CANAL, parkQ = qi => qi === 1 || qi === 3;
+    CANAL_QUADS.forEach(([sx, sy], qi) => {
+      c.save(); c.scale(sx, sy);
+      canalIslandPath(c, 0); c.fillStyle = '#cfc2a3'; c.fill();
+      canalIslandPath(c, -26); c.fillStyle = parkQ(qi) ? '#8fd274' : '#efe3c6'; c.fill();
+      c.restore();
+    });
+    c.beginPath(); c.arc(0, 0, C.rc, 0, TAU); c.fillStyle = '#cfc2a3'; c.fill();
+    c.beginPath(); c.arc(0, 0, C.rc - 26, 0, TAU); c.fillStyle = '#efe3c6'; c.fill();
+    c.beginPath(); c.arc(0, 0, 70, 0, TAU); c.fillStyle = '#d2c7ac'; c.fill();
+    c.beginPath(); c.arc(0, 0, 40, 0, TAU); c.fillStyle = '#f6efdc'; c.fill();
+    for (const b of canalBridgeList()) { canalBridgePath(c, b, 0); c.fillStyle = '#e4d8b9'; c.fill(); }
+    for (const ob of map.obstacles) {
+      switch (ob.t) {
+        case 'house': c.fillStyle = '#c85a3a'; c.fillRect(ob.x - 50, ob.y - 36, 100, 72); break;
+        case 'stall': c.fillStyle = ob.v === 'pain' ? '#2442a8' : ob.v === 'fleurs' ? '#2f9e5b' : ob.v === 'fromage' ? '#f2b81f' : '#d62839'; c.fillRect(ob.x - 46, ob.y - 30, 92, 60); break;
+        case 'tree': if (detail) { c.beginPath(); c.arc(ob.x, ob.y, 30, 0, TAU); c.fillStyle = '#3f8f3a'; c.fill(); } break;
+        case 'cafe': if (detail) { c.beginPath(); c.arc(ob.x, ob.y, 24, 0, TAU); c.fillStyle = '#d62839'; c.fill(); } break;
+      }
+    }
+    return;
+  }
   const cr = map.coastR;
   const blob = (off, col) => { c.beginPath(); for (let i = 0; i <= 120; i++) { const th = i / 120 * TAU, r = cr(th) + off; if (i) c.lineTo(Math.cos(th) * r, Math.sin(th) * r); else c.moveTo(Math.cos(th) * r, Math.sin(th) * r); } c.closePath(); c.fillStyle = col; c.fill(); };
   if (map.kind === 'place') {
@@ -323,7 +539,7 @@ function drawMapThumb(cv, kind) {
   c.setTransform(1, 0, 0, 1, 0, 0); c.clearRect(0, 0, w, h);
   const tc = SEA_THEME[kind] || SEA_THEME.ile, g = c.createLinearGradient(0, 0, 0, h);
   g.addColorStop(0, tc[0]); g.addColorStop(1, tc[1]); c.fillStyle = g; c.fillRect(0, 0, w, h);
-  const s = Math.min(w, h) / 2 / (kind === 'place' ? 900 : 1010);
+  const s = Math.min(w, h) / 2 / (kind === 'canal' ? 770 : kind === 'place' ? 900 : 1010);
   c.translate(w / 2, h / 2); c.scale(s, s);
   drawMapShapes(c, map, true);
   c.setTransform(1, 0, 0, 1, 0, 0);
@@ -682,13 +898,23 @@ class Renderer {
       const h1 = hash2(cx, cy), h2 = hash2(cy + 77, cx - 13);
       if (h1 < 0.3) continue;
       const x = cx * step + h1 * step, y = cy * step + h2 * step;
-      if (Math.hypot(x, y) < cr(Math.atan2(y, x)) + 40) continue;
+      if (map.kind === 'canal' ? map.sd(x, y) < 34 : Math.hypot(x, y) < cr(Math.atan2(y, x)) + 40) continue;
       const a = 0.12 + 0.28 * (0.5 + 0.5 * Math.sin(t * 1.1 + h2 * 6.28));
       c.strokeStyle = 'rgba(255,255,255,' + a.toFixed(3) + ')'; c.lineWidth = 3;
       c.beginPath(); c.arc(x, y, 16 + h1 * 16, Math.PI * 1.1, Math.PI * 1.9); c.stroke();
       c.beginPath(); c.arc(x + 20, y + 14, 10 + h2 * 8, Math.PI * 1.15, Math.PI * 1.85); c.stroke();
     }
-    if (map.kind === 'place') {   // Seine: mörk skugga under kajmuren, lugna ljusa strömdrag
+    if (map.kind === 'canal') {   // kanaler: ljusa strömdrag som rinner längs kajkanterna
+      const C = CANAL;
+      c.lineWidth = 3.2;
+      [[28, 0.20, 9, 0], [16, 0.32, -13, 2], [6, 0.52, 7, 4]].forEach(([off, a, spd, ph]) => {
+        const o = off + Math.sin(t * 0.9 + ph) * 2;
+        c.strokeStyle = 'rgba(255,255,255,' + a + ')'; c.setLineDash([22, 18]); c.lineDashOffset = -t * spd + ph * 7;
+        for (const [sx, sy] of CANAL_QUADS) { c.save(); c.scale(sx, sy); canalIslandPath(c, o); c.stroke(); c.restore(); }
+        c.beginPath(); c.arc(0, 0, C.rc + o, 0, TAU); c.stroke();
+      });
+      c.setLineDash([]); c.lineDashOffset = 0;
+    } else if (map.kind === 'place') {   // Seine: mörk skugga under kajmuren, lugna ljusa strömdrag
       coastPath(c, 90, 5, t, cr); c.fillStyle = 'rgba(20,70,66,0.20)'; c.fill();
       coastPath(c, 50, 4, t + 1, cr); c.fillStyle = 'rgba(20,70,66,0.20)'; c.fill();
       coastPath(c, 18, 2, t + 2, cr); c.fillStyle = 'rgba(12,50,48,0.28)'; c.fill();
@@ -1013,9 +1239,9 @@ class Renderer {
   /* ---------- Minikarta ---------- */
   buildMinimap(size) {
     const dpr = this.dpr, cv = document.createElement('canvas'); cv.width = Math.round(size * dpr); cv.height = Math.round(size * dpr);
-    const c = cv.getContext('2d'), s = (size / 2 - 9) / 1080, map = this.map;
+    const c = cv.getContext('2d'), map = this.map, s = (size / 2 - 9) / (map.kind === 'canal' ? 1050 : 1080);
     c.setTransform(dpr, 0, 0, dpr, 0, 0);
-    c.beginPath(); c.arc(size / 2, size / 2, size / 2 - 1.5, 0, TAU); c.fillStyle = map.kind === 'place' ? 'rgba(40,125,115,0.82)' : 'rgba(30,110,150,0.78)'; c.fill(); c.lineWidth = 3; c.strokeStyle = '#f6f1e4'; c.stroke();
+    c.beginPath(); c.arc(size / 2, size / 2, size / 2 - 1.5, 0, TAU); c.fillStyle = map.kind === 'canal' ? 'rgba(35,135,145,0.82)' : map.kind === 'place' ? 'rgba(40,125,115,0.82)' : 'rgba(30,110,150,0.78)'; c.fill(); c.lineWidth = 3; c.strokeStyle = '#f6f1e4'; c.stroke();
     c.translate(size / 2, size / 2); c.scale(s, s);
     drawMapShapes(c, map, false);
     return { cv, size, s };

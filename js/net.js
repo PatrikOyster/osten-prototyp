@@ -220,6 +220,13 @@ class HostSession {
           this.broadcastLobby();
         }
         break;
+      case 'unpick':   // ångra låsningen och välj om – går bara medan matchen inte har startat
+        if (r && r.locked && !r.spec && this.phase === 'lobby') {
+          r.locked = false;
+          conn.send({ t: 'unpicked' });
+          this.broadcastLobby();
+        }
+        break;
       case 'inp':
         if (r && this.sim && !r.spec) this.sim.setInput(r.id, m);
         break;
@@ -260,6 +267,12 @@ class HostSession {
     const r = this.roster[0];
     if (r.locked || !WEAPONS[w] || this.phase !== 'lobby') return;
     r.weapon = w; r.locked = true;
+    this.broadcastLobby();
+  }
+  unpick() {
+    const r = this.roster[0];
+    if (!r.locked || this.phase !== 'lobby') return;
+    r.locked = false;   // r.weapon sparas så att lobbyn kan förvälja det tidigare valet
     this.broadcastLobby();
   }
   setSettings(s) {
@@ -343,6 +356,14 @@ class HostSession {
 /* =====================================================================
    KLIENT-SESSION
    ===================================================================== */
+/* Närmaste punkt på land inom 3 px från (x, y), annars null. Värdens positioner är avrundade till heltal och kan därför
+   ligga en hårsmån utanför kanten fast spelaren står på land. */
+function landNear(map, x, y) {
+  if (map.onLand(x, y)) return { x, y };
+  for (let r = 1; r <= 3; r++) for (let k = 0; k < 8; k++) { const px = x + Math.cos(k * Math.PI / 4) * r, py = y + Math.sin(k * Math.PI / 4) * r; if (map.onLand(px, py)) return { x: px, y: py }; }
+  return null;
+}
+
 class ClientSession {
   constructor(o) {
     this.role = 'client';
@@ -410,6 +431,7 @@ class ClientSession {
         this.cb.lobby && this.cb.lobby(this.lobbyState());
         break;
       case 'picked': this.myWeapon = m.w; this.locked = true; this.cb.lobby && this.cb.lobby(this.lobbyState()); break;
+      case 'unpicked': this.locked = false; this.cb.lobby && this.cb.lobby(this.lobbyState()); break;   // myWeapon behålls: förvalt vid omval
       case 'start':
         this.spec = this.me < 0 ? true : false;
         this.beginMatch(m.info);
@@ -475,10 +497,15 @@ class ClientSession {
     }
     P.st = 0;
     this.authMe = a;
-    const age = this.rtt / 2;
-    const ex = a.x + a.vx * age - P.x, ey = a.y + a.vy * age - P.y, err = Math.hypot(ex, ey);
+    const age = this.rtt / 2, map = this.map, hl = map ? landNear(map, a.x, a.y) : null;   // hl: värdens spelare på land (annars simmar eller flyger han)
+    let tx = (hl ? hl.x : a.x) + a.vx * age, ty = (hl ? hl.y : a.y) + a.vy * age;
+    // Trycker spelaren mot en kaj- eller kanalkant har värden kvar honom på land men med full fart framåt: extrapoleringen
+    // skulle då hamna i vattnet och dra med sig förutsägelsen ut över kanten. Håll målet på land.
+    if (hl && !map.onLand(tx, ty)) { tx = hl.x; ty = hl.y; }
+    const ex = tx - P.x, ey = ty - P.y, err = Math.hypot(ex, ey);
     if (err > 180) { P.x += ex; P.y += ey; P.cvx = a.vx; P.cvy = a.vy; }
     else { P.x += ex * 0.2; P.y += ey * 0.2; }
+    if (hl && !map.onLand(P.x, P.y)) { P.x = hl.x; P.y = hl.y; }   // aldrig kvar i vattnet när värden har spelaren på land
     if (Math.abs(P.tkCd - P.tkCdAuth) > 0.35) P.tkCd = P.tkCdAuth;
   }
 
@@ -498,7 +525,7 @@ class ClientSession {
     P.tkCd = Math.max(0, P.tkCd - dt);
     if (inp.tk !== this.predTk) {
       this.predTk = inp.tk;
-      if (P.tkCd <= 0 && P.dashT <= 0 && P.recT <= 0) {
+      if (P.tkCd <= 0 && P.dashT <= 0 && P.recT <= 0 && (!P.carry || CFG.carrierTackle)) {   // värden tillåter inte bärartackling
         let dx = inp.mx, dy = inp.my; const l = Math.hypot(dx, dy);
         if (l < 0.2) { dx = Math.cos(inp.a); dy = Math.sin(inp.a); } else { dx /= l; dy /= l; }
         P.dashT = CFG.tkDur; P.dashDx = dx; P.dashDy = dy; P.tkCd = CFG.tkCd;
@@ -544,6 +571,7 @@ class ClientSession {
   /* ---- Lobbyval ---- */
   setProfile(name, skin) { this.profile = { name, skin }; this.send({ t: 'prof', name, skin }); }
   pick(w) { if (!this.locked) this.send({ t: 'pick', w }); }
+  unpick() { if (this.locked) this.send({ t: 'unpick' }); }
 
   leave() {
     this.phase = 'closed';

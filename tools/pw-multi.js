@@ -1,12 +1,13 @@
 'use strict';
 /* Flerspelartest i två flikar via lokal transport (?net=local, BroadcastChannel) – värd + klient.
    Verifierar: rum, lobby, vapenval, matchstart, att klientens förutsägelse håller sig nära värdens sanning,
-   att båda ser samma ost/händelser, samt resultatskärmen. Kör:  node tools/pw-multi.js [utmapp] [lagMs] */
+   att båda ser samma ost/händelser, samt resultatskärmen. Kör:  node tools/pw-multi.js [utmapp] [lagMs] [bana]
+   (bana = place eller canal, standard place) */
 const { chromium } = require('playwright');
 const path = require('path'), fs = require('fs');
 const { start } = require('./serve.js');
 const out = path.resolve(process.argv[2] || '/tmp/shots'); fs.mkdirSync(out, { recursive: true });
-const LAG = +process.argv[3] || 0;
+const LAG = +process.argv[3] || 0, KIND = process.argv[4] || 'place';
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 let fails = 0;
 const check = (ok, msg) => { if (!ok) { fails++; console.log('  FAIL', msg); } else console.log('  ok  ', msg); };
@@ -41,12 +42,12 @@ const check = (ok, msg) => { if (!ok) { fails++; console.log('  FAIL', msg); } e
   await shot(A, 'm1-lobby-host'); await shot(B, 'm2-lobby-client');
   // bana och botantal: värden bestämmer, gästen ser valet och bakgrunden byter bana
   check(await B.evaluate(() => UI.lobby.settings.map) === 'ile' && await B.evaluate(() => App.renderer.map.kind) === 'ile', 'gästen börjar på ön');
-  await B.click('.mapcard[data-m="place"]', { force: true }); await sleep(400);
+  await B.click('.mapcard[data-m="' + KIND + '"]', { force: true }); await sleep(400);
   check(await A.evaluate(() => UI.lobby.settings.map) === 'ile', 'gästen kan inte byta bana');
-  await A.click('.mapcard[data-m="place"]'); await sleep(900);
-  check(await A.evaluate(() => UI.lobby.settings.map) === 'place' && await A.evaluate(() => App.renderer.map.kind) === 'place', 'värden valde torget (inställning + bakgrund)');
-  check(await B.evaluate(() => UI.lobby.settings.map) === 'place' && await B.evaluate(() => App.renderer.map.kind) === 'place', 'gästens lobby följer med: torget valt, bakgrunden bytt');
-  check(await B.evaluate(() => document.querySelector('.mapcard.on').dataset.m) === 'place' && await B.evaluate(() => document.querySelector('.mapcard').classList.contains('dis')), 'gästens bankort visar valet men är låsta');
+  await A.click('.mapcard[data-m="' + KIND + '"]'); await sleep(900);
+  check(await A.evaluate(() => UI.lobby.settings.map) === KIND && await A.evaluate(() => App.renderer.map.kind) === KIND, 'värden valde banan (inställning + bakgrund)');
+  check(await B.evaluate(() => UI.lobby.settings.map) === KIND && await B.evaluate(() => App.renderer.map.kind) === KIND, 'gästens lobby följer med: banan vald, bakgrunden bytt');
+  check(await B.evaluate(() => document.querySelector('.mapcard.on').dataset.m) === KIND && await B.evaluate(() => document.querySelector('.mapcard').classList.contains('dis')), 'gästens bankort visar valet men är låsta');
   await A.click('#bots-minus'); await A.click('#bots-minus'); await sleep(400);
   check(await B.evaluate(() => document.getElementById('bots-n').textContent) === '4' && await B.evaluate(() => document.getElementById('bots-minus').disabled), 'botantalet (7 önskade, 6 lediga platser, minus två klick = 4) syns för gästen men kan inte ändras där');
   await shot(A, 'm1b-lobby-host-place'); await shot(B, 'm2b-lobby-client-place');
@@ -54,7 +55,7 @@ const check = (ok, msg) => { if (!ok) { fails++; console.log('  FAIL', msg); } e
   await A.click('#btn-start');
   await sleep(1500);
   console.log('states', await A.evaluate(() => App.state), await B.evaluate(() => App.state));
-  check(await A.evaluate(() => App.session.sim.map.kind) === 'place' && await B.evaluate(() => App.session.map.kind) === 'place' && await B.evaluate(() => App.renderer.map.kind) === 'place', 'båda spelar på torget');
+  check(await A.evaluate(() => App.session.sim.map.kind) === KIND && await B.evaluate(() => App.session.map.kind) === KIND && await B.evaluate(() => App.renderer.map.kind) === KIND, 'båda spelar på vald bana');
   check(await A.evaluate(() => App.session.sim.players.length) === 6, 'sex spelare: två människor + fyra botar');
   check(await B.evaluate(() => JSON.stringify(App.session.map.obstacles) === JSON.stringify(App.session.map.obstacles) && App.session.map.obstacles.length) === await A.evaluate(() => App.session.sim.map.obstacles.length), 'klienten har samma hinder som värden');
   await shot(B, 'm3-reveal-client');
@@ -68,10 +69,12 @@ const check = (ok, msg) => { if (!ok) { fails++; console.log('  FAIL', msg); } e
   for (let i = 0; i < 10; i++) {
     await sleep(300);
     const a = await A.evaluate(() => { const v = App.session.sim.makeView(); const p = v.players.find(q => q.id === 1); return { x: p.x, y: p.y, st: p.st }; });
-    const b = await B.evaluate(() => { const v = App.lastView; const p = v.players.find(q => q.id === App.me); return { x: p.x, y: p.y, rtt: App.session.rtt, buf: App.session.buf.length }; });
-    samples.push({ err: Math.hypot(a.x - b.x, a.y - b.y), rtt: b.rtt, buf: b.buf, hx: Math.round(a.x), cx: Math.round(b.x) });
+    const b = await B.evaluate(() => { const v = App.lastView; const p = v.players.find(q => q.id === App.me); return { x: p.x, y: p.y, rtt: App.session.rtt, buf: App.session.buf.length, land: App.session.map.onLand(p.x, p.y) }; });
+    samples.push({ err: Math.hypot(a.x - b.x, a.y - b.y), rtt: b.rtt, buf: b.buf, hx: Math.round(a.x), cx: Math.round(b.x), land: b.land });
   }
   await B.keyboard.up('KeyD');
+  check(samples.every(q => q.land), 'klientens förutsagda spelare hamnar aldrig i vattnet när han trycker mot en kaj- eller kanalkant (' + samples.filter(q => !q.land).length + ' av ' + samples.length + ' mätningar i vattnet)');
+  check(samples.slice(-3).every(q => q.err < 45 + LAG * 0.8), 'prediktionsfelet är litet (<' + Math.round(45 + LAG * 0.8) + ' enheter) i slutet av gåendet: ' + samples.slice(-3).map(q => Math.round(q.err)).join('/'));
   console.log('prediktionsfel (enheter):', samples.map(s => Math.round(s.err)).join(' '), ' (host x vs klient x:', samples[9].hx, samples[9].cx + ')');
   await B.mouse.click(900, 300); await B.keyboard.press('Space'); await sleep(400);
   await shot(B, 'm6-client-action');
@@ -86,7 +89,7 @@ const check = (ok, msg) => { if (!ok) { fails++; console.log('  FAIL', msg); } e
   console.log('knapp "Spela igen" host:', await A.isVisible('#btn-again'), ' klient:', await B.isVisible('#btn-again'));
   await A.click('#btn-again'); await sleep(700);
   console.log('tillbaka i lobby:', await A.evaluate(() => App.state), await B.evaluate(() => App.state));
-  check(await A.evaluate(() => UI.lobby.settings.map) === 'place' && await B.evaluate(() => UI.lobby.settings.map) === 'place', 'banvalet finns kvar efter Spela igen');
+  check(await A.evaluate(() => UI.lobby.settings.map) === KIND && await B.evaluate(() => UI.lobby.settings.map) === KIND, 'banvalet finns kvar efter Spela igen');
   console.log('ERRORS', errors.length); for (const e of errors.slice(0, 20)) console.log('  ', e);
   console.log(fails || errors.length ? 'RESULT: FAIL' : 'RESULT: OK');
   await browser.close(); srv.s.close();
